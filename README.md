@@ -33,14 +33,57 @@ cmake --build build -j
 ./build/cpp-repl
 ```
 
+## CLI
+
+```bash
+cpp-repl [options] [file ...]
+  -h, --help           show help
+  -v, --version        show version
+  --no-scaffold        skip low-level VM scaffold demo
+  --no-interactive     exit after file/-e execution (CI)
+  -e <code>            execute C++ code and exit
+  <file>               load file before REPL
+```
+
+Examples:
+
+```bash
+./build/cpp-repl                          # interactive REPL
+./build/cpp-repl examples/hello.cpp       # load file then REPL
+./build/cpp-repl --no-scaffold -e 'int x=5; x*2' --no-interactive
+echo 'int x=42; x+1' | ./build/cpp-repl --no-scaffold
+```
+
 ## REPL Commands
 
 ```
-:help          show help
-:quit / :exit  exit
-:dump          dump accumulated IR
-:reset         reset interpreter state
+:help  :h               show help
+:quit :exit :q          exit REPL
+:dump                   dump accumulated inputs (history)
+:reset                  reset interpreter state
+:load <file>            load and execute file
+:lib <path>             load dynamic library (via LoadDynamicLibrary)
+:undo [n]               undo last n inputs
 ```
+
+## Examples
+
+See `examples/`:
+
+- `hello.cpp` – basic I/O and value printing
+- `functions.cpp` – incremental function definitions (persistence)
+- `class.cpp` – structs, classes, templates
+
+Load with `:load examples/hello.cpp` or `./build/cpp-repl examples/class.cpp`
+
+## Low-level VM detail
+
+`src/vm.{h,cpp}` is the raw `llvm::orc::LLJIT` wrapper – it manually builds LLVM IR
+(`LLVMContext`, `Module`, `IRBuilder`) and JIT-executes without Clang.
+`src/repl.{h,cpp}` builds on top via `clang::Interpreter` (which internally uses the same ORC JIT)
+to provide real C++ parsing.
+
+No optimizations: all builds are `-O0 -g -fno-exceptions -fno-rtti` to stay close to the VM.
 
 ## License
 

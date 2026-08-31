@@ -3,6 +3,7 @@
 #include "clang/Interpreter/Interpreter.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/TargetSelect.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -13,6 +14,11 @@ Repl::Repl() = default;
 Repl::~Repl() = default;
 
 bool Repl::init(std::string &err) {
+  // Ensure native target is initialized even when VM scaffold is skipped
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  llvm::InitializeNativeTargetAsmParser();
+
   // Build incremental compiler – minimal args, O0, no optimization.
   clang::IncrementalCompilerBuilder builder;
   // Bare C++17 with include paths from system. Use default driver args.

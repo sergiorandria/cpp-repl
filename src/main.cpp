@@ -8,12 +8,66 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
-// Simple scaffold test for Task 1: verify LLVM linkage + VM init.
-// Task 1 does not yet need interactive loop – but we provide it.
+static void print_help(const char *prog) {
+  std::cout << "cpp-repl – low-level C++ REPL (LLVM 22, O0)\n"
+               "Usage:\n"
+               "  "
+            << prog << " [options] [file ...]\n"
+               "Options:\n"
+               "  -h, --help           show this help\n"
+               "  -v, --version        show version\n"
+               "  --no-scaffold        skip low-level VM scaffold demo\n"
+               "  --no-interactive     exit after scaffold / file execution\n"
+               "  -e <code>            execute C++ code and exit\n"
+               "  <file>               load and execute file before REPL\n"
+               "\n"
+               "REPL commands (inside REPL):\n"
+               "  :help :dump :reset :load <file> :lib <so> :undo [n] :quit\n";
+}
+
+static void print_version() {
+  std::cout << "cpp-repl 0.1.0 (LLVM 22.1.3 / clang 22.1.8)\n"
+               "VM: llvm::orc::LLJIT (no optimizations, O0)\n";
+}
+
 int main(int argc, char **argv) {
+  // --- CLI argument parsing (no optimization, simple) ---
+  bool no_scaffold = false;
+  bool no_interactive = false;
+  std::vector<std::string> exec_codes;
+  std::vector<std::string> load_files;
+
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      print_help(argv[0]);
+      return 0;
+    } else if (arg == "-v" || arg == "--version") {
+      print_version();
+      return 0;
+    } else if (arg == "--no-scaffold") {
+      no_scaffold = true;
+    } else if (arg == "--no-interactive") {
+      no_interactive = true;
+    } else if (arg == "-e") {
+      if (i + 1 >= argc) {
+        std::cerr << "-e requires an argument\n";
+        return 1;
+      }
+      exec_codes.push_back(argv[++i]);
+    } else if (!arg.empty() && arg[0] == '-') {
+      std::cerr << "unknown option: " << arg << "\n";
+      print_help(argv[0]);
+      return 1;
+    } else {
+      load_files.push_back(arg);
+    }
+  }
+
   // --- Low-level VM sanity check: build a tiny IR module manually ---
-  {
+  if (!no_scaffold) {
     std::string err;
     vm::VM vm;
     if (!vm.init(err)) {
@@ -63,13 +117,28 @@ int main(int argc, char **argv) {
     std::cerr << "REPL init failed: " << err << "\n";
     return 1;
   }
-  repl.help();
 
-  // If arguments contain --no-interactive, just exit after scaffold (for CI)
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "--no-interactive")
-      return 0;
+  // Load files / -e code before interactive loop
+  for (auto &f : load_files) {
+    std::string loadErr;
+    if (!repl.loadFile(f, loadErr)) {
+      std::cerr << "failed to load " << f << ": " << loadErr << "\n";
+      return 1;
+    }
+    std::cout << "[loaded " << f << "]\n";
   }
+  for (auto &c : exec_codes) {
+    std::string evalErr;
+    if (!repl.eval(c, evalErr)) {
+      if (!evalErr.empty())
+        std::cerr << " -e error: " << evalErr << "\n";
+      return 1;
+    }
+  }
+  if (no_interactive)
+    return 0;
+
+  repl.help();
 
   std::string line;
   std::string buffer;
