@@ -26,8 +26,7 @@ public:
 
   // Add a Module (takes ownership). Module is moved into ThreadSafeModule.
   bool addModule(std::unique_ptr<llvm::Module> M,
-                 std::unique_ptr<llvm::LLVMContext> Ctx,
-                 std::string &err);
+                 std::unique_ptr<llvm::LLVMContext> Ctx, std::string &err);
 
   // Lookup symbol address (mangled IR name)
   llvm::Expected<llvm::orc::ExecutorAddr> lookup(const std::string &name);

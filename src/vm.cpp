@@ -28,17 +28,15 @@ bool VM::init(std::string &err) {
 }
 
 bool VM::addModule(std::unique_ptr<llvm::Module> M,
-                   std::unique_ptr<llvm::LLVMContext> Ctx,
-                   std::string &err) {
+                   std::unique_ptr<llvm::LLVMContext> Ctx, std::string &err) {
   if (!jit_) {
     err = "VM not initialized";
     return false;
   }
   llvm::orc::ThreadSafeModule tsm(std::move(M), std::move(Ctx));
   if (auto e = jit_->addIRModule(std::move(tsm))) {
-    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) {
-      err = EIB.message();
-    });
+    llvm::handleAllErrors(
+        std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   return true;
