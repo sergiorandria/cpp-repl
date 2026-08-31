@@ -12,19 +12,30 @@
 
 static void print_help(const char *prog) {
   std::cout << "cpp-repl – low-level C++ REPL (LLVM 22, O0)\n"
+               "  Like Python interpreter, but for C++ – no int main() needed,\n"
+               "  just raw C++ code.\n"
                "Usage:\n"
                "  "
-            << prog << " [options] [file ...]\n"
-               "Options:\n"
-               "  -h, --help           show this help\n"
-               "  -v, --version        show version\n"
-               "  --no-scaffold        skip low-level VM scaffold demo\n"
-               "  --no-interactive     exit after scaffold / file execution\n"
-               "  -e <code>            execute C++ code and exit\n"
-               "  <file>               load and execute file before REPL\n"
-               "\n"
-               "REPL commands (inside REPL):\n"
-               "  :help :dump :reset :load <file> :lib <so> :undo [n] :quit\n";
+             << prog << " [options] [file ...]\n"
+                "Options:\n"
+                "  -h, --help           show this help\n"
+                "  -v, --version        show version\n"
+                "  --scaffold           show low-level VM scaffold demo (hidden by default)\n"
+                "  --no-scaffold        (deprecated) same as default\n"
+                "  --no-interactive     exit after file/-e execution (script mode)\n"
+                "  -e <code>            execute raw C++ code and exit (e.g. -e 'int x=5; x*2')\n"
+                "  <file>               execute raw C++ file as script, then enter REPL\n"
+                "\n"
+                "REPL commands (inside REPL):\n"
+                "  :help :dump :reset :load <file> :lib <so> :undo [n] :quit\n"
+                "\n"
+                "Examples (no main required):\n"
+                "  cpp> int x = 42;\n"
+                "  cpp> x * 2          // prints (int) 84 – no semicolon needed\n"
+                "  cpp> #include <iostream>\n"
+                "  cpp> std::cout << \"hi\" << std::endl;\n"
+                "  $ cpp-repl script.cpp            # run raw C++ file like python script.py\n"
+                "  $ echo 'int x=5; x+10' | cpp-repl --no-interactive\n";
 }
 
 static void print_version() {
@@ -34,7 +45,8 @@ static void print_version() {
 
 int main(int argc, char **argv) {
   // --- CLI argument parsing (no optimization, simple) ---
-  bool no_scaffold = false;
+  // Default: interpreter-like, no scaffold banner (like python)
+  bool show_scaffold = false;
   bool no_interactive = false;
   std::vector<std::string> exec_codes;
   std::vector<std::string> load_files;
@@ -47,8 +59,10 @@ int main(int argc, char **argv) {
     } else if (arg == "-v" || arg == "--version") {
       print_version();
       return 0;
+    } else if (arg == "--scaffold") {
+      show_scaffold = true;
     } else if (arg == "--no-scaffold") {
-      no_scaffold = true;
+      show_scaffold = false; // deprecated, default is no scaffold
     } else if (arg == "--no-interactive") {
       no_interactive = true;
     } else if (arg == "-e") {
@@ -67,7 +81,8 @@ int main(int argc, char **argv) {
   }
 
   // --- Low-level VM sanity check: build a tiny IR module manually ---
-  if (!no_scaffold) {
+  // Only shown with --scaffold, default interpreter hides it (python-like)
+  if (show_scaffold) {
     std::string err;
     vm::VM vm;
     if (!vm.init(err)) {
