@@ -60,6 +60,12 @@ cpp-repl [options] [file ...]
   --scaffold           show low-level VM IR demo (hidden by default)
   --no-interactive     exit after file/-e execution (script mode, like python)
   -e <code>            execute raw C++ code (no main needed)
+  -I <path>            add include path (absolute or relative, repeatable)
+  -L <path>            add library search path
+  -l <lib>             link library (e.g. -l m -l gmp, also .so path)
+  -D <macro>           define macro (e.g. -DDEBUG=1)
+  --include <path>     same as -I
+  --library <lib>      same as -l
   <file>               execute raw C++ file as script (like python script.py)
 ```
 
@@ -72,6 +78,9 @@ Examples (no `int main()` required, just raw C++ like Python):
 ./build/cpp-repl -e 'int x=5; x*2' --no-interactive  # -e raw code
 echo 'int x=42; x+1' | ./build/cpp-repl   # pipe like python
 echo 'cpp_int a = cpp_int("12345678901234567890"); a*a' | ./build/cpp-repl
+# absolute & relative includes + libraries (cmdline)
+./build/cpp-repl -I ./include -I /abs/path -L ./lib -l mylib -e '#include "myheader.h"'
+./build/cpp-repl -I ./rel_include --library m --no-interactive -e 'extern "C" int mylib_add(int,int); mylib_add(2,3)'
 ```
 
 ## REPL Commands (inside `cpp>`)
@@ -82,10 +91,49 @@ echo 'cpp_int a = cpp_int("12345678901234567890"); a*a' | ./build/cpp-repl
 :dump                   dump history + current C++ version
 :reset                  reset interpreter state
 :load <file>            load raw C++ file
-:lib <path>             load dynamic library
+:lib <path>             load dynamic library (abs/rel, e.g. :lib ./lib/mylib.so)
+:I <path>               add include search path (abs or rel, like -I)
+:L <path>               add library search path (like -L)
 :undo [n]               undo last n
 :version                show current -std version
 ```
+
+## Include & Library (absolute/relative, cmdline & interactive)
+
+Both **absolute** (`/usr/local/include/mylib.h`) and **relative** (`./include/mylib.h`, `../common/header.h`) are supported.
+
+**Cmdline (like `g++ -I/-L/-l`):**
+
+```bash
+# Include: absolute + relative
+cpp-repl -I ./rel_include -I /tmp/abs_include -e '#include "myheader.h"'
+
+# Library: absolute .so path, or -L + -l search
+cpp-repl -l /tmp/abs_mylib.so -e 'extern "C" int mylib_add(int,int); mylib_add(5,10)'
+cpp-repl -L ./tmp_lib -l mylib -e 'extern "C" int mylib_add(int,int); mylib_add(2,3)'
+cpp-repl -I ./include -L ./lib -l mylib --library gmp -D DEBUG=1
+
+# Combined with file/script
+cpp-repl -I ./include -L ./lib -l mylib examples/use_mylib.cpp --no-interactive
+```
+
+**Interactive (inside REPL):**
+
+```cpp
+cpp> :I ./rel_include           // relative
+cpp> :I /tmp/abs_include        // absolute
+cpp> #include "myheader.h"      // now found
+cpp> rel_func()                 // (int) 200
+
+cpp> :L ./tmp_lib
+cpp> :lib mylib                 // bare -l name, searches -L paths
+cpp> :lib ./tmp_lib/libmylib.so // absolute/relative .so
+cpp> extern "C" int mylib_add(int,int);
+cpp> mylib_add(7,8)             // (int) 1015
+```
+
+Paths are stored and survive `C++` version upgrades (e.g. adding `:I` then `concept` → still keeps includes).
+
 
 ## C++ Version Support (auto-detect)
 

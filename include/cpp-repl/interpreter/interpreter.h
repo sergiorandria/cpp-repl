@@ -21,9 +21,26 @@ public:
   Interpreter(const Interpreter &) = delete;
   Interpreter &operator=(const Interpreter &) = delete;
 
-  // Init with explicit version (default C++17)
+  // Init with explicit version and include/lib options (absolute & relative)
+  bool init(utils::StdVersion version, const std::vector<std::string> &includePaths,
+            const std::vector<std::string> &defines, std::string &err);
+  bool init(utils::StdVersion version,
+            const std::vector<std::string> &includePaths,
+            const std::vector<std::string> &defines,
+            const std::vector<std::string> &libraryPaths,
+            const std::vector<std::string> &libraries,
+            std::string &err);
   bool init(utils::StdVersion version, std::string &err);
   bool init(std::string &err) { return init(utils::StdVersion::Cpp17, err); }
+  bool init(const std::vector<std::string> &includePaths,
+            const std::vector<std::string> &defines, std::string &err) {
+    return init(utils::StdVersion::Cpp17, includePaths, defines, err);
+  }
+
+  // Dynamic include/library handling (interactive :I, :L)
+  bool addIncludePath(const std::string &path, std::string &err);
+  bool addLibraryPath(const std::string &path, std::string &err);
+  bool addLibrary(const std::string &lib, std::string &err);
 
   // Auto-detect version from code and re-init if needed (scalable)
   bool evalAuto(const std::string &code, std::string &err);
@@ -45,10 +62,17 @@ public:
 
 private:
   bool ensureVersion(utils::StdVersion needed, std::string &err);
+  bool reinitWithCurrentOptions(std::string &err);
   std::unique_ptr<clang::Interpreter> interp_;
   bool initialized_ = false;
   std::vector<std::string> history_;
   utils::StdVersion currentVersion_ = utils::StdVersion::Cpp17;
+  std::vector<std::string> includePaths_;
+  std::vector<std::string> defines_;
+  std::vector<std::string> libraryPaths_;
+  std::vector<std::string> libraries_;
+  // Storage for compiler args c_str() lifetime
+  std::vector<std::string> compilerArgsStorage_;
 };
 
 } // namespace interpreter

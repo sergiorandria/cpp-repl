@@ -75,13 +75,27 @@ int main(int argc, char **argv) {
                  "pluggable backends possible\n\n";
   }
 
-  // --- C++ REPL (interpreter with auto version + bigint) ---
+  // --- C++ REPL (interpreter with auto version + bigint + include/lib) ---
   cpprepl::interpreter::Interpreter interp;
   std::string err;
   // Start with C++17, will auto-upgrade to C++20/23 when needed
-  if (!interp.init(cpprepl::utils::StdVersion::Cpp17, err)) {
+  // Pass include/library paths from cmdline (absolute & relative)
+  if (!interp.init(cpprepl::utils::StdVersion::Cpp17, opts.includePaths,
+                   opts.defines, opts.libraryPaths, opts.libraries, err)) {
     std::cerr << "REPL init failed: " << err << "\n";
     return 1;
+  }
+  if (!opts.includePaths.empty()) {
+    std::cout << "[include paths:";
+    for (auto &p : opts.includePaths) std::cout << " " << p;
+    std::cout << "]\n";
+  }
+  if (!opts.libraryPaths.empty() || !opts.libraries.empty()) {
+    std::cout << "[library paths:";
+    for (auto &p : opts.libraryPaths) std::cout << " " << p;
+    std::cout << " | libs:";
+    for (auto &l : opts.libraries) std::cout << " " << l;
+    std::cout << "]\n";
   }
 
   // Load files / -e code before interactive loop (like python script)

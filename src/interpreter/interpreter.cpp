@@ -16,22 +16,60 @@ namespace interpreter {
 Interpreter::Interpreter() = default;
 Interpreter::~Interpreter() = default;
 
+bool Interpreter::init(utils::StdVersion version,
+                   const std::vector<std::string> &includePaths,
+                   const std::vector<std::string> &defines, std::string &err) {
+  return init(version, includePaths, defines, {}, {}, err);
+}
+
 bool Interpreter::init(utils::StdVersion version, std::string &err) {
+  return init(version, {}, {}, err);
+}
+
+bool Interpreter::init(utils::StdVersion version,
+                   const std::vector<std::string> &includePaths,
+                   const std::vector<std::string> &defines,
+                   const std::vector<std::string> &libraryPaths,
+                   const std::vector<std::string> &libraries,
+                   std::string &err) {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
   llvm::InitializeNativeTargetAsmParser();
 
+  // Store for re-init (version upgrade, :I, etc.)
+  includePaths_ = includePaths;
+  defines_ = defines;
+  libraryPaths_ = libraryPaths;
+  libraries_ = libraries;
+  currentVersion_ = version;
+
   clang::IncrementalCompilerBuilder builder;
-  std::vector<const char *> args = {
-      utils::VersionDetector::toFlag(version).c_str(), "-O0", "-resource-dir",
-      "/usr/lib/clang/22"};
-  // Need to keep string storage alive – use static or member. For now use
-  // persistent. To avoid c_str() dangling, we duplicate via builder's internal
-  // copy? Actually builder stores pointers, so we need to ensure c_str() lives.
-  // Use static string.
-  static std::string flagStorage;
-  flagStorage = utils::VersionDetector::toFlag(version);
-  args[0] = flagStorage.c_str();
+  compilerArgsStorage_.clear();
+  compilerArgsStorage_.push_back(utils::VersionDetector::toFlag(version));
+  compilerArgsStorage_.push_back("-O0");
+  compilerArgsStorage_.push_back("-resource-dir");
+  compilerArgsStorage_.push_back("/usr/lib/clang/22");
+  for (auto &p : includePaths_) {
+    compilerArgsStorage_.push_back("-I");
+    compilerArgsStorage_.push_back(p);
+  }
+  for (auto &d : defines_) {
+    compilerArgsStorage_.push_back("-D");
+    compilerArgsStorage_.push_back(d);
+  }
+  for (auto &p : libraryPaths_) {
+    compilerArgsStorage_.push_back("-L");
+    compilerArgsStorage_.push_back(p);
+  }
+  // Note: -l is handled via LoadDynamicLibrary, not compiler arg, but also add for completeness
+  for (auto &l : libraries_) {
+    // Keep as -l<lib> without space to match clang driver
+    compilerArgsStorage_.push_back("-l" + l);
+  }
+
+  std::vector<const char *> args;
+  args.reserve(compilerArgsStorage_.size());
+  for (auto &s : compilerArgsStorage_) args.push_back(s.c_str());
 
   builder.SetCompilerArgs(args);
   auto CI = builder.CreateCpp();
@@ -49,37 +87,151 @@ bool Interpreter::init(utils::StdVersion version, std::string &err) {
   }
   interp_ = std::move(*interpOrErr);
   initialized_ = true;
-  currentVersion_ = version;
 
-  // Inject BigInt support preamble for python-like large ints (cpp_int +
-  // bigint)
+  // Inject BigInt support preamble
   if (utils::BigIntSupport::isAvailable()) {
     clang::Value V;
     auto e = interp_->ParseAndExecute(utils::BigIntSupport::preamble(), &V);
     if (e)
       llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) {});
 #ifdef HAS_GMP
-    // Also inject GMP mpz support if available (linked with -lgmp)
     auto e2 = interp_->ParseAndExecute(utils::BigIntSupport::gmpPreamble(), &V);
     if (e2)
       llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
 #endif
   }
+  // Load libraries requested via -l / --library (absolute, relative, or -l name)
+  for (auto &lib : libraries_) {
+    auto tryLoad = [&](const std::string &path) -> bool {
+      if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
+        llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){});
+        return false;
+      }
+      return true;
+    };
+    // If lib contains '/', treat as path (absolute or relative)
+    if (lib.find('/') != std::string::npos) {
+      if (tryLoad(lib)) continue;
+      // Try with .so suffix if no extension
+      if (lib.find(".so") == std::string::npos) {
+        if (tryLoad(lib + ".so")) continue;
+      }
+      // Fall through to error (will be reported via LoadDynamicLibrary)
+      continue;
+    }
+    // Bare lib name like "m", "gmp", "mylib"
+    // Try as given, then lib + .so, then lib<name>.so variants
+    if (tryLoad(lib)) continue;
+    if (lib.find(".so") == std::string::npos) {
+      if (tryLoad(lib + ".so")) continue;
+      if (tryLoad("lib" + lib + ".so")) continue;
+    }
+    // Search in libraryPaths
+    bool found = false;
+    for (auto &lp : libraryPaths_) {
+      std::string base = lp;
+      if (!base.empty() && base.back() == '/') base.pop_back();
+      if (tryLoad(base + "/" + lib)) { found = true; break; }
+      if (lib.find(".so") == std::string::npos) {
+        if (tryLoad(base + "/" + lib + ".so")) { found = true; break; }
+        if (tryLoad(base + "/lib" + lib + ".so")) { found = true; break; }
+      }
+    }
+    if (found) continue;
+    // Also try system default search for -l<lib> style (e.g., -l m -> libm.so)
+    if (lib.find(".so") == std::string::npos && lib.find("lib") != 0) {
+      std::string sysLib = "lib" + lib + ".so";
+      if (tryLoad(sysLib)) continue;
+      // Try common system paths
+      if (tryLoad("/usr/lib/" + sysLib)) continue;
+      if (tryLoad("/usr/lib/x86_64-linux-gnu/" + sysLib)) continue;
+    }
+    // If still not found, keep library as is (error will be reported on use)
+  }
   return true;
 }
 
-bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
-  if (!initialized_)
-    return init(needed, err);
-  if (static_cast<int>(needed) <= static_cast<int>(currentVersion_))
-    return true;
-  // Need higher version – re-init and replay history
+bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   std::vector<std::string> oldHistory = history_;
   std::string local;
   interp_.reset();
   initialized_ = false;
   history_.clear();
-  if (!init(needed, local)) {
+  if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
+    err = local;
+    return false;
+  }
+  for (auto &h : oldHistory) {
+    std::string e;
+    if (!eval(h, e)) { /* keep going */ }
+  }
+  return true;
+}
+
+bool Interpreter::addIncludePath(const std::string &path, std::string &err) {
+  for (auto &p : includePaths_) if (p == path) return true;
+  includePaths_.push_back(path);
+  return reinitWithCurrentOptions(err);
+}
+bool Interpreter::addLibraryPath(const std::string &path, std::string &err) {
+  for (auto &p : libraryPaths_) if (p == path) return true;
+  libraryPaths_.push_back(path);
+  return reinitWithCurrentOptions(err);
+}
+bool Interpreter::addLibrary(const std::string &lib, std::string &err) {
+  libraries_.push_back(lib);
+  if (!initialized_) return true;
+  auto tryLoad = [&](const std::string &path) -> bool {
+    // std::cerr << "[tryLoad " << path << "]\n";
+    if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
+      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){ err = EIB.message(); });
+      return false;
+    }
+    err.clear();
+    return true;
+  };
+  if (lib.find('/') != std::string::npos) {
+    if (tryLoad(lib)) return true;
+    if (lib.find(".so") == std::string::npos) {
+      if (tryLoad(lib + ".so")) return true;
+    }
+    return false;
+  }
+  if (tryLoad(lib)) return true;
+  if (lib.find(".so") == std::string::npos) {
+    if (tryLoad(lib + ".so")) return true;
+    if (tryLoad("lib" + lib + ".so")) return true;
+  }
+  for (auto &lp : libraryPaths_) {
+    std::string base = lp;
+    if (!base.empty() && base.back() == '/') base.pop_back();
+    if (tryLoad(base + "/" + lib)) return true;
+    if (lib.find(".so") == std::string::npos) {
+      if (tryLoad(base + "/" + lib + ".so")) return true;
+      if (tryLoad(base + "/lib" + lib + ".so")) return true;
+    }
+  }
+  if (lib.find(".so") == std::string::npos && lib.find("lib") != 0) {
+    std::string sysLib = "lib" + lib + ".so";
+    if (tryLoad(sysLib)) return true;
+    if (tryLoad("/usr/lib/" + sysLib)) return true;
+    if (tryLoad("/usr/lib/x86_64-linux-gnu/" + sysLib)) return true;
+  }
+  return false;
+}
+
+bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
+  if (!initialized_)
+    return init(needed, includePaths_, defines_, libraryPaths_, libraries_, err);
+  if (static_cast<int>(needed) <= static_cast<int>(currentVersion_))
+    return true;
+  // Need higher version – re-init and replay history, preserving include/lib
+  std::vector<std::string> oldHistory = history_;
+  std::string local;
+  interp_.reset();
+  initialized_ = false;
+  history_.clear();
+  if (!init(needed, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
   }
@@ -377,7 +529,9 @@ void Interpreter::help() const {
                "  :dump           dump accumulated inputs\n"
                "  :reset          reset interpreter state\n"
                "  :load <file>    load and execute file\n"
-               "  :lib <path>     load dynamic library\n"
+               "  :lib <path>     load dynamic library (absolute or relative)\n"
+               "  :I <path>       add include search path (abs/rel, like -I)\n"
+               "  :L <path>       add library search path (like -L)\n"
                "  :undo [n]       undo last n inputs (default 1)\n"
                "  :version        show current C++ version\n"
                "\n"
@@ -388,6 +542,13 @@ void Interpreter::help() const {
                "       std::cout << \"hi\" << std::endl;\n"
                "  cpp> int add(int a,int b){return a+b;}\n"
                "  cpp> add(2,3)\n"
+               "Include/Lib (cmdline & interactive):\n"
+               "  $ cpp-repl -I ./include -I /abs/path -L ./lib -l mylib\n"
+               "  $ cpp-repl --include ./include --library m\n"
+               "  cpp> :I ./include      // add relative include path\n"
+               "  cpp> :I /usr/local/include  // absolute\n"
+               "  cpp> #include \"myheader.h\"  // now found via -I\n"
+               "  cpp> :lib ./lib/mylib.so   // load absolute/relative lib\n"
                "BigInt: cpp_int / bigint via boost::multiprecision (e.g. "
                "cpp_int a = cpp_int(\"12345678901234567890\"); a*a)\n"
                "C++20/23: auto-detects 'concept', 'requires', 'import' etc. "

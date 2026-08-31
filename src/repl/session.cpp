@@ -75,10 +75,18 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
   if (t.rfind(":lib", 0) == 0) {
     std::string path = trim(t.substr(4));
     if (path.empty())
-      std::cout << "usage: :lib <path>\n";
+      std::cout << "usage: :lib <path> (absolute, relative, or -l name)\n";
     else {
       std::string e;
-      if (!interp_.loadLibrary(path, e))
+      // Use addLibrary for bare names (searches -L paths), else loadLibrary for direct path
+      bool ok = false;
+      if (path.find('/') != std::string::npos || path.find(".so") != std::string::npos) {
+        ok = interp_.loadLibrary(path, e);
+        if (!ok) ok = interp_.addLibrary(path, e);
+      } else {
+        ok = interp_.addLibrary(path, e);
+      }
+      if (!ok)
         std::cerr << "lib error: " << e << "\n";
       else
         std::cout << "[lib " << path << "]\n";
@@ -99,6 +107,31 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       std::cerr << "undo error: " << e << "\n";
     else
       std::cout << "[undid " << n << "]\n";
+    return true;
+  }
+  // Include path handling (absolute & relative) – interactive :I / :include
+  if (t.rfind(":I", 0) == 0 || t.rfind(":include", 0) == 0 || t.rfind(":inc", 0) == 0) {
+    std::string path;
+    if (t.rfind(":I", 0) == 0) path = trim(t.substr(2));
+    else if (t.rfind(":include", 0) == 0) path = trim(t.substr(8));
+    else path = trim(t.substr(4));
+    // Support ":I=path" or ":I path"
+    if (!path.empty() && path[0] == '=') path = trim(path.substr(1));
+    if (path.empty()) { std::cout << "usage: :I <path>  (add include path, absolute or relative)\n"; return true; }
+    std::string e;
+    if (!interp_.addIncludePath(path, e)) std::cerr << "include path error: " << e << "\n";
+    else std::cout << "[include path: " << path << "]\n";
+    return true;
+  }
+  if (t.rfind(":L", 0) == 0 || t.rfind(":libpath", 0) == 0) {
+    std::string path;
+    if (t.rfind(":L", 0) == 0) path = trim(t.substr(2));
+    else path = trim(t.substr(8));
+    if (!path.empty() && path[0] == '=') path = trim(path.substr(1));
+    if (path.empty()) { std::cout << "usage: :L <path>  (add library search path)\n"; return true; }
+    std::string e;
+    if (!interp_.addLibraryPath(path, e)) std::cerr << "library path error: " << e << "\n";
+    else std::cout << "[library path: " << path << "]\n";
     return true;
   }
   if (!t.empty() && t[0] == ':') {
