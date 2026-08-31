@@ -1,5 +1,13 @@
-#include "vm.h"
-#include "repl.h"
+#include "cpp-repl/core/vm.h"
+#include "cpp-repl/interpreter/interpreter.h"
+#include "cpp-repl/repl/session.h"
+#include "cpp-repl/cli/cli.h"
+#include "cpp-repl/utils/version_detector.h"
+#include "cpp-repl/utils/bigint.h"
+
+// Legacy headers kept for compat (wrappers)
+// #include "vm.h"
+// #include "repl.h"
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -8,302 +16,72 @@
 
 #include <iostream>
 #include <string>
-#include <vector>
-
-static void print_help(const char *prog) {
-  std::cout << "cpp-repl – low-level C++ REPL (LLVM 22, O0)\n"
-               "  Like Python interpreter, but for C++ – no int main() needed,\n"
-               "  just raw C++ code.\n"
-               "Usage:\n"
-               "  "
-             << prog << " [options] [file ...]\n"
-                "Options:\n"
-                "  -h, --help           show this help\n"
-                "  -v, --version        show version\n"
-                "  --scaffold           show low-level VM scaffold demo (hidden by default)\n"
-                "  --no-scaffold        (deprecated) same as default\n"
-                "  --no-interactive     exit after file/-e execution (script mode)\n"
-                "  -e <code>            execute raw C++ code and exit (e.g. -e 'int x=5; x*2')\n"
-                "  <file>               execute raw C++ file as script, then enter REPL\n"
-                "\n"
-                "REPL commands (inside REPL):\n"
-                "  :help :dump :reset :load <file> :lib <so> :undo [n] :quit\n"
-                "\n"
-                "Examples (no main required):\n"
-                "  cpp> int x = 42;\n"
-                "  cpp> x * 2          // prints (int) 84 – no semicolon needed\n"
-                "  cpp> #include <iostream>\n"
-                "  cpp> std::cout << \"hi\" << std::endl;\n"
-                "  $ cpp-repl script.cpp            # run raw C++ file like python script.py\n"
-                "  $ echo 'int x=5; x+10' | cpp-repl --no-interactive\n";
-}
-
-static void print_version() {
-  std::cout << "cpp-repl 0.1.0 (LLVM 22.1.3 / clang 22.1.8)\n"
-               "VM: llvm::orc::LLJIT (no optimizations, O0)\n";
-}
 
 int main(int argc, char **argv) {
-  // --- CLI argument parsing (no optimization, simple) ---
-  // Default: interpreter-like, no scaffold banner (like python)
-  bool show_scaffold = false;
-  bool no_interactive = false;
-  std::vector<std::string> exec_codes;
-  std::vector<std::string> load_files;
-
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "-h" || arg == "--help") {
-      print_help(argv[0]);
-      return 0;
-    } else if (arg == "-v" || arg == "--version") {
-      print_version();
-      return 0;
-    } else if (arg == "--scaffold") {
-      show_scaffold = true;
-    } else if (arg == "--no-scaffold") {
-      show_scaffold = false; // deprecated, default is no scaffold
-    } else if (arg == "--no-interactive") {
-      no_interactive = true;
-    } else if (arg == "-e") {
-      if (i + 1 >= argc) {
-        std::cerr << "-e requires an argument\n";
-        return 1;
-      }
-      exec_codes.push_back(argv[++i]);
-    } else if (!arg.empty() && arg[0] == '-') {
-      std::cerr << "unknown option: " << arg << "\n";
-      print_help(argv[0]);
-      return 1;
-    } else {
-      load_files.push_back(arg);
-    }
+  std::string cliErr;
+  auto opts = cpprepl::cli::parse(argc, argv, cliErr);
+  if (!cliErr.empty()) {
+    std::cerr << cliErr << "\n";
+    cpprepl::cli::printHelp(argv[0]);
+    return 1;
   }
+  if (opts.showHelp) { cpprepl::cli::printHelp(argv[0]); return 0; }
+  if (opts.showVersion) { cpprepl::cli::printVersion(); return 0; }
 
-  // --- Low-level VM sanity check: build a tiny IR module manually ---
-  // Only shown with --scaffold, default interpreter hides it (python-like)
-  if (show_scaffold) {
+  // --- Low-level VM scaffold (scalable core) ---
+  if (opts.showScaffold) {
     std::string err;
-    vm::VM vm;
-    if (!vm.init(err)) {
-      std::cerr << "VM init failed: " << err << "\n";
-      return 1;
-    }
-
+    cpprepl::core::LLJITVM vm;
+    if (!vm.init(err)) { std::cerr << "VM init failed: " << err << "\n"; return 1; }
     auto ctx = std::make_unique<llvm::LLVMContext>();
     auto mod = std::make_unique<llvm::Module>("scaffold", *ctx);
     llvm::IRBuilder<> builder(*ctx);
-
-    // int scaffold_fn() { return 42; }
-    llvm::FunctionType *FT =
-        llvm::FunctionType::get(builder.getInt32Ty(), false);
-    llvm::Function *F =
-        llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
-                               "scaffold_fn", mod.get());
+    llvm::FunctionType *FT = llvm::FunctionType::get(builder.getInt32Ty(), false);
+    llvm::Function *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "scaffold_fn", mod.get());
     llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
     builder.SetInsertPoint(BB);
     builder.CreateRet(builder.getInt32(42));
-
-    std::string ir;
-    llvm::raw_string_ostream os(ir);
-    mod->print(os, nullptr);
+    std::string ir; llvm::raw_string_ostream os(ir); mod->print(os, nullptr);
     std::cout << "=== Scaffold IR (low-level VM) ===\n" << os.str() << "\n";
-
-    if (!vm.addModule(std::move(mod), std::move(ctx), err)) {
-      std::cerr << "addModule failed: " << err << "\n";
-      return 1;
-    }
+    if (!vm.addModule(std::move(mod), std::move(ctx), err)) { std::cerr << "addModule failed: " << err << "\n"; return 1; }
     auto addrOrErr = vm.lookup("scaffold_fn");
-    if (!addrOrErr) {
-      std::string msg;
-      llvm::handleAllErrors(addrOrErr.takeError(),
-                            [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
-      std::cerr << "lookup failed: " << msg << "\n";
-      return 1;
-    }
+    if (!addrOrErr) { std::string msg; llvm::handleAllErrors(addrOrErr.takeError(), [&](llvm::ErrorInfoBase &EIB){ msg=EIB.message(); }); std::cerr << "lookup failed: " << msg << "\n"; return 1; }
     auto fn = addrOrErr->toPtr<int (*)()>();
-    std::cout << "scaffold_fn() via VM = " << fn() << " (expected 42)\n\n";
+    std::cout << "scaffold_fn() via VM = " << fn() << " (expected 42)\n";
+    std::cout << "VM is scalable: LLJITVM implements core::VM interface, pluggable backends possible\n\n";
   }
 
-  // --- C++ REPL (clang Interpreter) ---
+  // --- C++ REPL (interpreter with auto version + bigint) ---
+  cpprepl::interpreter::Interpreter interp;
   std::string err;
-  repl::Repl repl;
-  if (!repl.init(err)) {
+  // Start with C++17, will auto-upgrade to C++20/23 when needed
+  if (!interp.init(cpprepl::utils::StdVersion::Cpp17, err)) {
     std::cerr << "REPL init failed: " << err << "\n";
     return 1;
   }
 
-  // Load files / -e code before interactive loop
-  for (auto &f : load_files) {
-    std::string loadErr;
-    if (!repl.loadFile(f, loadErr)) {
-      std::cerr << "failed to load " << f << ": " << loadErr << "\n";
-      return 1;
-    }
-    std::cout << "[loaded " << f << "]\n";
+  // Load files / -e code before interactive loop (like python script)
+  for (auto &f : opts.files) {
+    std::string e;
+    if (!interp.loadFile(f, e)) { std::cerr << "failed to load " << f << ": " << e << "\n"; return 1; }
+    std::cout << "[loaded " << f << "] [" << cpprepl::utils::VersionDetector::toString(interp.currentVersion()) << "]\n";
   }
-  for (auto &c : exec_codes) {
-    std::string evalErr;
-    if (!repl.eval(c, evalErr)) {
-      if (!evalErr.empty())
-        std::cerr << " -e error: " << evalErr << "\n";
+  for (auto &c : opts.execCodes) {
+    std::string e;
+    if (!interp.evalAuto(c, e)) {
+      if (!e.empty()) std::cerr << " -e error: " << e << "\n";
       return 1;
     }
   }
-  if (no_interactive)
-    return 0;
+  if (opts.noInteractive) return 0;
 
-  repl.help();
+  // Show help and current capabilities
+  interp.help();
+  std::cout << "BigInt available: " << (cpprepl::utils::BigIntSupport::isAvailable() ? "yes (boost::multiprecision::cpp_int)" : "no") << "\n";
+  std::cout << "Try: bigint x = cpp_int(\"123456789012345678901234567890\"); x * x\n";
 
-  std::string line;
-  std::string buffer;
-  auto trim = [](std::string s) {
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if (a == std::string::npos)
-      return std::string();
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
-  };
-
-  std::cout << "cpp> " << std::flush;
-  while (std::getline(std::cin, line)) {
-    std::string t = trim(line);
-
-    // Handle REPL commands only when not inside multiline buffer
-    if (buffer.empty()) {
-      if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" ||
-          t == "exit" || t == "quit") {
-        break;
-      }
-      if (t == ":help" || t == ":h") {
-        repl.help();
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (t == ":dump") {
-        repl.dump();
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (t == ":reset") {
-        repl.reset(err);
-        if (!err.empty())
-          std::cerr << "reset error: " << err << "\n";
-        else
-          std::cout << "[reset]\n";
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (t.rfind(":load", 0) == 0) {
-        std::string path = trim(t.substr(5));
-        if (path.empty()) {
-          std::cout << "usage: :load <file>\n";
-        } else {
-          std::string loadErr;
-          if (!repl.loadFile(path, loadErr)) {
-            std::cerr << "load error: " << loadErr << "\n";
-          } else {
-            std::cout << "[loaded " << path << "]\n";
-          }
-        }
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (t.rfind(":lib", 0) == 0) {
-        std::string path = trim(t.substr(4));
-        if (path.empty()) {
-          std::cout << "usage: :lib <path>\n";
-        } else {
-          std::string loadErr;
-          if (!repl.loadLibrary(path, loadErr)) {
-            std::cerr << "lib load error: " << loadErr << "\n";
-          } else {
-            std::cout << "[lib " << path << "]\n";
-          }
-        }
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (t.rfind(":undo", 0) == 0) {
-        std::string rest = trim(t.substr(5));
-        unsigned n = 1;
-        if (!rest.empty()) {
-          char *end = nullptr;
-          unsigned long v = std::strtoul(rest.c_str(), &end, 10);
-          if (end != rest.c_str() && v > 0) n = (unsigned)v;
-        }
-        std::string undoErr;
-        if (!repl.undo(n, undoErr)) {
-          std::cerr << "undo error: " << undoErr << "\n";
-        } else {
-          std::cout << "[undid " << n << "]\n";
-        }
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (!t.empty() && t[0] == ':' ) {
-        std::cout << "unknown command: " << line << " (try :help)\n";
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-      if (t.empty()) {
-        std::cout << "cpp> " << std::flush;
-        continue;
-      }
-    }
-
-    // Multiline handling: accumulate until braces/parens balanced
-    buffer += line + "\n";
-
-    // Quick incomplete detection via Repl helper
-    bool incomplete = false;
-    // Use a temporary eval to check incomplete without actually executing?
-    // Instead we use simple heuristic here: if braces/parens/brackets unbalanced
-    // or line ends with '\' then keep buffering.
-    if (!line.empty() && line.back() == '\\') {
-      incomplete = true;
-    } else {
-      int braces = 0, parens = 0, brackets = 0;
-      for (char c : buffer) {
-        if (c == '{')
-          ++braces;
-        else if (c == '}')
-          --braces;
-        else if (c == '(')
-          ++parens;
-        else if (c == ')')
-          --parens;
-        else if (c == '[')
-          ++brackets;
-        else if (c == ']')
-          --brackets;
-      }
-      if (braces > 0 || parens > 0 || brackets > 0) {
-        incomplete = true;
-      } else {
-        // Also handle trailing incomplete like "int foo() {" already covered
-        // For expressions without terminator, we allow eval – clang will error if incomplete
-        incomplete = false;
-      }
-    }
-
-    if (incomplete) {
-      std::cout << "...> " << std::flush;
-      continue;
-    }
-
-    // Evaluate buffer
-    {
-      std::string evalErr;
-      if (!repl.eval(buffer, evalErr)) {
-        if (!evalErr.empty())
-          std::cerr << "error: " << evalErr << "\n";
-      }
-      buffer.clear();
-      std::cout << "cpp> " << std::flush;
-    }
-  }
-
-  std::cout << "\nbye\n";
+  // Run interactive session via scalable repl::Session
+  cpprepl::repl::Session session(interp);
+  session.runInteractive();
   return 0;
 }

@@ -51,13 +51,44 @@ else()
 endif()
 message(STATUS "LLVM libs: ${LLVM_LIBS}")
 
+# Scalable modular sources
 add_executable(cpp-repl
   src/main.cpp
+  # Legacy low-level (kept for compat, now wrappers)
   src/vm.cpp
   src/repl.cpp
+  # New scalable architecture
+  src/core/vm.cpp
+  src/interpreter/interpreter.cpp
+  src/utils/version_detector.cpp
+  src/utils/bigint.cpp
+  src/repl/session.cpp
+  src/cli/cli.cpp
 )
 
-target_include_directories(cpp-repl PRIVATE src ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+target_include_directories(cpp-repl PRIVATE
+  include
+  src
+  ${LLVM_INCLUDE_DIRS}
+  ${CLANG_INCLUDE_DIRS}
+)
+
+# BigInt support: boost header-only + optional GMP
+find_package(Boost QUIET)
+if(Boost_FOUND)
+  message(STATUS "Boost found: ${Boost_INCLUDE_DIRS}")
+  target_include_directories(cpp-repl PRIVATE ${Boost_INCLUDE_DIRS})
+endif()
+find_library(GMP_LIB gmp)
+find_library(GMPXX_LIB gmpxx)
+if(GMP_LIB)
+  message(STATUS "GMP found: ${GMP_LIB}")
+  target_link_libraries(cpp-repl PRIVATE ${GMP_LIB})
+  if(GMPXX_LIB)
+    target_link_libraries(cpp-repl PRIVATE ${GMPXX_LIB})
+  endif()
+  target_compile_definitions(cpp-repl PRIVATE HAS_GMP=1)
+endif()
 
 # Link against clang-cpp (contains Interpreter) and LLVM
 # clang-cpp is a single shared lib that includes all clang libs in LLVM 22
