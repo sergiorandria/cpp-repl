@@ -73,56 +73,111 @@ int main(int argc, char **argv) {
 
   std::string line;
   std::string buffer;
+  auto trim = [](std::string s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos)
+      return std::string();
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+  };
+
   std::cout << "cpp> " << std::flush;
   while (std::getline(std::cin, line)) {
-    // Handle REPL commands
-    if (line == ":quit" || line == ":exit" || line == ":q") {
-      break;
-    }
-    if (line == ":help" || line == ":h") {
-      repl.help();
-      std::cout << "cpp> " << std::flush;
-      continue;
-    }
-    if (line == ":dump") {
-      repl.dump();
-      std::cout << "cpp> " << std::flush;
-      continue;
-    }
-    if (line == ":reset") {
-      repl.reset(err);
-      if (!err.empty())
-        std::cerr << "reset error: " << err << "\n";
-      else
-        std::cout << "[reset]\n";
-      std::cout << "cpp> " << std::flush;
-      continue;
-    }
-    if (line.rfind(":", 0) == 0) {
-      std::cout << "unknown command: " << line << " (try :help)\n";
-      std::cout << "cpp> " << std::flush;
-      continue;
+    std::string t = trim(line);
+
+    // Handle REPL commands only when not inside multiline buffer
+    if (buffer.empty()) {
+      if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" ||
+          t == "exit" || t == "quit") {
+        break;
+      }
+      if (t == ":help" || t == ":h") {
+        repl.help();
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
+      if (t == ":dump") {
+        repl.dump();
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
+      if (t == ":reset") {
+        repl.reset(err);
+        if (!err.empty())
+          std::cerr << "reset error: " << err << "\n";
+        else
+          std::cout << "[reset]\n";
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
+      if (t.rfind(":load", 0) == 0) {
+        std::string path = trim(t.substr(5));
+        if (path.empty()) {
+          std::cout << "usage: :load <file>\n";
+        } else {
+          std::string loadErr;
+          if (!repl.loadFile(path, loadErr)) {
+            std::cerr << "load error: " << loadErr << "\n";
+          } else {
+            std::cout << "[loaded " << path << "]\n";
+          }
+        }
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
+      if (!t.empty() && t[0] == ':' ) {
+        std::cout << "unknown command: " << line << " (try :help)\n";
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
+      if (t.empty()) {
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
     }
 
-    // Very minimal multiline: if line ends with '\\' or braces unbalanced, accumulate
+    // Multiline handling: accumulate until braces/parens balanced
     buffer += line + "\n";
-    // Heuristic: if empty line or line ends with ';' '}' then evaluate.
-    // For scaffold we just eval per line – not optimal, but no optimization per spec.
-    bool shouldEval = true;
-    // If braces unbalanced, keep buffering
-    int open = 0;
-    for (char c : buffer) {
-      if (c == '{')
-        ++open;
-      else if (c == '}')
-        --open;
-    }
-    if (open > 0) {
-      std::cout << "...> " << std::flush;
-      shouldEval = false;
+
+    // Quick incomplete detection via Repl helper
+    bool incomplete = false;
+    // Use a temporary eval to check incomplete without actually executing?
+    // Instead we use simple heuristic here: if braces/parens/brackets unbalanced
+    // or line ends with '\' then keep buffering.
+    if (!line.empty() && line.back() == '\\') {
+      incomplete = true;
+    } else {
+      int braces = 0, parens = 0, brackets = 0;
+      for (char c : buffer) {
+        if (c == '{')
+          ++braces;
+        else if (c == '}')
+          --braces;
+        else if (c == '(')
+          ++parens;
+        else if (c == ')')
+          --parens;
+        else if (c == '[')
+          ++brackets;
+        else if (c == ']')
+          --brackets;
+      }
+      if (braces > 0 || parens > 0 || brackets > 0) {
+        incomplete = true;
+      } else {
+        // Also handle trailing incomplete like "int foo() {" already covered
+        // For expressions without terminator, we allow eval – clang will error if incomplete
+        incomplete = false;
+      }
     }
 
-    if (shouldEval) {
+    if (incomplete) {
+      std::cout << "...> " << std::flush;
+      continue;
+    }
+
+    // Evaluate buffer
+    {
       std::string evalErr;
       if (!repl.eval(buffer, evalErr)) {
         if (!evalErr.empty())

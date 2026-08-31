@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace clang {
 class Interpreter;
@@ -31,9 +32,19 @@ public:
   void reset(std::string &err);
   void help() const;
 
+  // Load and execute a file's contents
+  bool loadFile(const std::string &path, std::string &err);
+
+  // Try incremental eval: returns true if code was incomplete and should
+  // continue buffering (instead of error). Used by REPL loop.
+  bool eval(const std::string &code, std::string &err, bool &incomplete);
+
+  size_t historySize() const { return history_.size(); }
+
 private:
   std::unique_ptr<clang::Interpreter> interp_;
   bool initialized_ = false;
+  std::vector<std::string> history_;
 };
 
 } // namespace repl

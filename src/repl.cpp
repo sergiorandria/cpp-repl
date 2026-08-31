@@ -3,7 +3,9 @@
 #include "clang/Interpreter/Interpreter.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/Error.h"
+#include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace repl {
 
@@ -48,29 +50,76 @@ bool Repl::eval(const std::string &code, std::string &err) {
   if (e) {
     llvm::handleAllErrors(std::move(e),
                           [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
-    // Clang diagnostics already printed to stderr via CompilerInstance.
     return false;
   }
   if (V.isValid()) {
     V.dump();
     std::cout << "\n";
   }
+  if (!code.empty())
+    history_.push_back(code);
   return true;
 }
 
+bool Repl::eval(const std::string &code, std::string &err, bool &incomplete) {
+  incomplete = false;
+  // Heuristic: empty is complete
+  std::string trimmed = code;
+  // Very low-level check: if braces/parens unbalanced, treat as incomplete
+  int braces = 0, parens = 0, brackets = 0;
+  for (char c : code) {
+    if (c == '{')
+      ++braces;
+    else if (c == '}')
+      --braces;
+    else if (c == '(')
+      ++parens;
+    else if (c == ')')
+      --parens;
+    else if (c == '[')
+      ++brackets;
+    else if (c == ']')
+      --brackets;
+  }
+  if (braces > 0 || parens > 0 || brackets > 0) {
+    incomplete = true;
+    return true;
+  }
+  return eval(code, err);
+}
+
+bool Repl::loadFile(const std::string &path, std::string &err) {
+  std::ifstream f(path);
+  if (!f) {
+    err = "cannot open file: " + path;
+    return false;
+  }
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return eval(ss.str(), err);
+}
+
 void Repl::dump() const {
-  // For now, no direct IR dump – placeholder. Interpreter keeps PTUs.
-  // Future: iterate PTUs and dump LLVM module.
-  std::cout << "[dump] IR dump not yet implemented – PTUs kept internally\n";
+  std::cout << "=== REPL history (" << history_.size() << " inputs) ===\n";
+  for (size_t i = 0; i < history_.size(); ++i) {
+    std::cout << "[" << i << "] " << history_[i];
+    if (history_[i].empty() || history_[i].back() != '\n')
+      std::cout << "\n";
+    std::cout << "---\n";
+  }
+  if (history_.empty())
+    std::cout << "(no inputs yet)\n";
 }
 
 void Repl::reset(std::string &err) {
   std::string local;
-  // Re-init interpreter from scratch – simplest reset.
   interp_.reset();
   initialized_ = false;
+  history_.clear();
   if (!init(local)) {
     err = local;
+  } else {
+    err.clear();
   }
 }
 
@@ -79,14 +128,19 @@ void Repl::help() const {
                "Commands:\n"
                "  :help  :h       show this help\n"
                "  :quit  :exit :q exit REPL\n"
-               "  :dump           dump IR (TODO)\n"
+               "  :dump           dump accumulated inputs\n"
                "  :reset          reset interpreter state\n"
+               "  :load <file>    load and execute file\n"
                "\n"
                "Enter C++ code. Supports incremental declarations:\n"
                "  cpp> int x = 42;\n"
                "  cpp> x + 1\n"
                "  cpp> #include <iostream>\n"
-               "       std::cout << \"hi\" << std::endl;\n";
+               "       std::cout << \"hi\" << std::endl;\n"
+               "  cpp> int add(int a,int b){return a+b;}\n"
+               "  cpp> add(2,3)\n"
+               "\n"
+               "Multiline: unbalanced { ( [ keeps buffering with ...> prompt\n";
 }
 
 } // namespace repl
