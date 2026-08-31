@@ -1,0 +1,67 @@
+name: Format & Lint
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  clang-format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format-22
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm22.list
+          sudo apt-get update
+          sudo apt-get install -y clang-format-22
+
+      - name: Check formatting
+        run: |
+          clang-format-22 --version
+          # Find all C++ sources
+          FILES=$(find include src examples -name '*.h' -o -name '*.cpp' -o -name '*.hpp' | tr '\n' ' ')
+          echo "Checking: $FILES"
+          # Dry-run: warn but don't fail strictly unless you want enforcement
+          # Change to --dry-run --Werror to enforce
+          clang-format-22 --dry-run --Werror $FILES || {
+            echo "::warning::Code is not formatted. Run: clang-format-22 -i $FILES"
+            # For now soft-fail; uncomment next line to enforce:
+            # exit 1
+            exit 0
+          }
+
+  cmake-lint:
+    name: cmake / whitespace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check trailing whitespace & CMake syntax
+        run: |
+          # Trailing whitespace
+          if grep -rn --include='*.cpp' --include='*.h' --include='*.cmake' --include='CMakeLists.txt' '[[:blank:]]$' .; then
+            echo "::warning::Trailing whitespace found"
+          fi
+          # CMake configure dry-run (syntax check)
+          cmake -B /tmp/cmake-lint -DCMAKE_BUILD_TYPE=Debug -DLLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm 2>&1 | head -n 100 || true
+          echo "cmake lint done"
+
+  cppcheck:
+    name: cppcheck (optional)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,style --inline-suppr \
+            --suppress=missingInclude \
+            --error-exitcode=0 \
+            -I include src/ 2>&1 | tee cppcheck.log || true
+          cat cppcheck.log

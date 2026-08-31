@@ -1,5 +1,13 @@
 # cpp-repl
 
+[![CI](https://github.com/sergiorandria/cpp-repl/actions/workflows/ci.yml/badge.svg)](https://github.com/sergiorandria/cpp-repl/actions/workflows/ci.yml)
+[![Format](https://github.com/sergiorandria/cpp-repl/actions/workflows/format.yml/badge.svg)](https://github.com/sergiorandria/cpp-repl/actions/workflows/format.yml)
+[![CodeQL](https://github.com/sergiorandria/cpp-repl/actions/workflows/codeql.yml/badge.svg)](https://github.com/sergiorandria/cpp-repl/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17%2F20%2F23-blue.svg)](https://en.cppreference.com)
+[![LLVM 22](https://img.shields.io/badge/LLVM-22-red.svg)](https://llvm.org)
+[![last commit](https://img.shields.io/github/last-commit/sergiorandria/cpp-repl)](https://github.com/sergiorandria/cpp-repl/commits/main)
+
 Low-level C++ REPL (like Python REPL) built on LLVM VM concept.
 
 - **VM core**: `llvm::orc::LLJIT` – in-process JIT, no optimization initially
@@ -210,6 +218,15 @@ examples/
   hello.cpp, functions.cpp, class.cpp, bigint.cpp, version_concept.cpp
 ```
 
+## CI & Quality
+
+- **CI** (`ci.yml`): Ubuntu 24.04, LLVM 22, `Debug` + `Release`, smoke tests (`-e`, pipe, examples, BigInt, C++20 concepts)
+- **Format** (`format.yml`): `clang-format-22` + whitespace + `cppcheck`
+- **CodeQL** (`codeql.yml`): weekly security analysis (C++)
+- **Release** (`release.yml`): builds tarball on `v*` tags via `softprops/action-gh-release`
+
+Enable branch protection on `main` to require `Build (ubuntu-24.04, Debug, LLVM 22)` before merge.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

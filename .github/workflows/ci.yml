@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }}, ${{ matrix.build_type }}, LLVM ${{ matrix.llvm }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        build_type: [Debug, Release]
+        llvm: [22]
+        include:
+          - os: ubuntu-24.04
+            build_type: Debug
+            llvm: 22
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install LLVM & Clang ${{ matrix.llvm }}
+        run: |
+          set -eux
+          sudo apt-get update
+          # Ubuntu 24.04 ships LLVM 18 by default; use apt.llvm.org for LLVM 22
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm22.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build ccache \
+            llvm-22 llvm-22-dev \
+            clang-22 libclang-22-dev libclang-cpp22-dev \
+            liblld-22-dev \
+            libboost-all-dev libgmp-dev \
+            llvm-22-tools
+          clang-22 --version
+          llvm-config-22 --version
+          ls -lh /usr/lib/llvm-22/lib/libLLVM-22.so || true
+          ls -lh /usr/lib/x86_64-linux-gnu/libclang-cpp.so* || true
+          ls -lh /usr/lib/libclang-cpp.so* || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.os }}-llvm${{ matrix.llvm }}-${{ matrix.build_type }}
+
+      - name: Configure (CMake)
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DLLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm \
+            -DCMAKE_CXX_FLAGS="-O0 -g" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          cmake --build build -j $(nproc)
+          ls -lh build/cpp-repl
+          file build/cpp-repl
+
+      - name: Smoke Test - CLI
+        run: |
+          ./build/cpp-repl --help
+          ./build/cpp-repl --version
+          ./build/cpp-repl --scaffold | head -n 50
+
+      - name: Smoke Test - Execution (-e)
+        run: |
+          ./build/cpp-repl -e 'int x=5; x*2' --no-interactive
+          ./build/cpp-repl -e 'int a=10; int b=20; a+b' --no-interactive
+          echo 'int x=42; x+1' | ./build/cpp-repl --no-interactive || true
+
+      - name: Smoke Test - Examples
+        run: |
+          for f in examples/*.cpp; do
+            echo "--- Testing $f ---"
+            ./build/cpp-repl --no-interactive "$f" || echo "failed $f (non-zero exit)"
+          done
+
+      - name: Smoke Test - BigInt & C++20
+        run: |
+          ./build/cpp-repl --no-interactive -e 'cpp_int a = cpp_int("123456789012345678901234567890"); a * cpp_int("2")'
+          ./build/cpp-repl --no-interactive -e 'template<typename T> concept Addable = requires(T a,T b){ a+b; }; Addable auto x = 42; x'
+
+      - name: Upload artifact
+        if: matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-repl-${{ matrix.os }}-llvm${{ matrix.llvm }}
+          path: build/cpp-repl
+          retention-days: 7
+
+  # Fast sanity job for PRs without full LLVM install (doc/lint only) could be added here

@@ -1,8 +1,14 @@
 build/
 cmake-build-*/
 *.o
+*.o.tmp
+-*.o
 *.a
 *.so
 compile_commands.json
 .vscode/settings.json
 .cache/
+*.tmp
+.DS_Store
+.cache/
+ccache/
