@@ -46,13 +46,16 @@ bool Interpreter::init(utils::StdVersion version, std::string &err) {
   initialized_ = true;
   currentVersion_ = version;
 
-  // Inject BigInt support preamble for python-like large ints
+  // Inject BigInt support preamble for python-like large ints (cpp_int + bigint)
   if (utils::BigIntSupport::isAvailable()) {
-    std::string dummy;
-    // Use internal eval without version check to avoid recursion
     clang::Value V;
     auto e = interp_->ParseAndExecute(utils::BigIntSupport::preamble(), &V);
     if (e) llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){});
+#ifdef HAS_GMP
+    // Also inject GMP mpz support if available (linked with -lgmp)
+    auto e2 = interp_->ParseAndExecute(utils::BigIntSupport::gmpPreamble(), &V);
+    if (e2) llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+#endif
   }
   return true;
 }
@@ -145,6 +148,23 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     bool shouldPrint = true;
     if (V.isVoid()) shouldPrint = false;
     else if (trimmed.find("std::cout") != std::string::npos || trimmed.find("printf") != std::string::npos) shouldPrint = false;
+    else {
+      // BigInt support – like Python, print actual value via std::cout for cpp_int/mpz
+      std::string typeStr; llvm::raw_string_ostream os(typeStr); V.printType(os); os.flush();
+      if (typeStr.find("cpp_int") != std::string::npos || typeStr.find("mpz_int") != std::string::npos ||
+          typeStr.find("mpq_rational") != std::string::npos || typeStr.find("cpp_dec_float") != std::string::npos ||
+          typeStr.find("boost::multiprecision") != std::string::npos) {
+        // Check if expr is simple and not already a cout
+        std::string expr = rtrim_semi(trimmed);
+        // Avoid double cout for already cout expressions
+        if (expr.find("std::cout") == std::string::npos) {
+          std::string printCode = "std::cout << (" + expr + ") << std::endl;";
+          clang::Value dummy; auto e2 = interp_->ParseAndExecute(printCode, &dummy);
+          if (e2) llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+          shouldPrint = false; // already printed via cout
+        }
+      }
+    }
     if (shouldPrint) { V.dump(); std::cout << "\n"; }
   } else {
     std::string t = trim_copy(code);
@@ -158,7 +178,18 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       std::string stripped = rtrim_semi(code);
       if (likelyExpr && stripped.find(';') == std::string::npos && stripped.size() < 200) {
         clang::Value V2; auto e2 = interp_->ParseAndExecute(stripped, &V2);
-        if (!e2 && V2.isValid()) { V2.dump(); std::cout << "\n"; }
+        if (!e2 && V2.isValid()) {
+          // BigInt check for stripped expr as well
+          std::string typeStr2; llvm::raw_string_ostream os2(typeStr2); V2.printType(os2); os2.flush();
+          if (typeStr2.find("cpp_int") != std::string::npos || typeStr2.find("mpz_int") != std::string::npos ||
+              typeStr2.find("boost::multiprecision") != std::string::npos) {
+            std::string printCode = "std::cout << (" + stripped + ") << std::endl;";
+            clang::Value dummy; auto e3 = interp_->ParseAndExecute(printCode, &dummy);
+            if (e3) llvm::handleAllErrors(std::move(e3), [&](llvm::ErrorInfoBase &EIB){});
+          } else {
+            V2.dump(); std::cout << "\n";
+          }
+        }
         else if (e2) llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
       }
     }
