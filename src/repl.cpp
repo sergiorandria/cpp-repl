@@ -99,6 +99,35 @@ bool Repl::loadFile(const std::string &path, std::string &err) {
   return eval(ss.str(), err);
 }
 
+bool Repl::loadLibrary(const std::string &path, std::string &err) {
+  if (!initialized_ || !interp_) {
+    err = "REPL not initialized";
+    return false;
+  }
+  if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
+    llvm::handleAllErrors(std::move(e),
+                          [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    return false;
+  }
+  return true;
+}
+
+bool Repl::undo(unsigned n, std::string &err) {
+  if (!initialized_ || !interp_) {
+    err = "REPL not initialized";
+    return false;
+  }
+  if (auto e = interp_->Undo(n)) {
+    llvm::handleAllErrors(std::move(e),
+                          [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    return false;
+  }
+  // Also pop from history
+  while (n-- > 0 && !history_.empty())
+    history_.pop_back();
+  return true;
+}
+
 void Repl::dump() const {
   std::cout << "=== REPL history (" << history_.size() << " inputs) ===\n";
   for (size_t i = 0; i < history_.size(); ++i) {
@@ -131,6 +160,8 @@ void Repl::help() const {
                "  :dump           dump accumulated inputs\n"
                "  :reset          reset interpreter state\n"
                "  :load <file>    load and execute file\n"
+               "  :lib <path>     load dynamic library\n"
+               "  :undo [n]       undo last n inputs (default 1)\n"
                "\n"
                "Enter C++ code. Supports incremental declarations:\n"
                "  cpp> int x = 42;\n"
@@ -140,7 +171,8 @@ void Repl::help() const {
                "  cpp> int add(int a,int b){return a+b;}\n"
                "  cpp> add(2,3)\n"
                "\n"
-               "Multiline: unbalanced { ( [ keeps buffering with ...> prompt\n";
+               "Multiline: unbalanced { ( [ keeps buffering with ...> prompt\n"
+               "Diagnostics: errors printed to stderr, history not updated on failure\n";
 }
 
 } // namespace repl

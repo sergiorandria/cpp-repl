@@ -35,11 +35,18 @@ public:
   // Load and execute a file's contents
   bool loadFile(const std::string &path, std::string &err);
 
+  // Dynamic library loading (wraps Interpreter::LoadDynamicLibrary)
+  bool loadLibrary(const std::string &path, std::string &err);
+
+  // Undo last N inputs (wraps Interpreter::Undo)
+  bool undo(unsigned n, std::string &err);
+
   // Try incremental eval: returns true if code was incomplete and should
   // continue buffering (instead of error). Used by REPL loop.
   bool eval(const std::string &code, std::string &err, bool &incomplete);
 
   size_t historySize() const { return history_.size(); }
+  void clearHistory() { history_.clear(); }
 
 private:
   std::unique_ptr<clang::Interpreter> interp_;

@@ -125,6 +125,38 @@ int main(int argc, char **argv) {
         std::cout << "cpp> " << std::flush;
         continue;
       }
+      if (t.rfind(":lib", 0) == 0) {
+        std::string path = trim(t.substr(4));
+        if (path.empty()) {
+          std::cout << "usage: :lib <path>\n";
+        } else {
+          std::string loadErr;
+          if (!repl.loadLibrary(path, loadErr)) {
+            std::cerr << "lib load error: " << loadErr << "\n";
+          } else {
+            std::cout << "[lib " << path << "]\n";
+          }
+        }
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
+      if (t.rfind(":undo", 0) == 0) {
+        std::string rest = trim(t.substr(5));
+        unsigned n = 1;
+        if (!rest.empty()) {
+          char *end = nullptr;
+          unsigned long v = std::strtoul(rest.c_str(), &end, 10);
+          if (end != rest.c_str() && v > 0) n = (unsigned)v;
+        }
+        std::string undoErr;
+        if (!repl.undo(n, undoErr)) {
+          std::cerr << "undo error: " << undoErr << "\n";
+        } else {
+          std::cout << "[undid " << n << "]\n";
+        }
+        std::cout << "cpp> " << std::flush;
+        continue;
+      }
       if (!t.empty() && t[0] == ':' ) {
         std::cout << "unknown command: " << line << " (try :help)\n";
         std::cout << "cpp> " << std::flush;
