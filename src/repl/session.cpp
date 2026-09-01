@@ -1,6 +1,12 @@
 #include "cpp-repl/repl/session.h"
 #include <iostream>
 #include <string>
+#include <cstdlib>
+#include <unistd.h>
+#ifdef HAS_READLINE
+#include <readline/readline.h>
+#include <readline/history.h>
+#endif
 
 namespace cpprepl {
 namespace repl {
@@ -142,7 +148,6 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
 }
 
 void Session::runInteractive() {
-  std::string line;
   auto trim = [](std::string s) {
     size_t a = s.find_first_not_of(" \t\r\n");
     if (a == std::string::npos)
@@ -150,6 +155,72 @@ void Session::runInteractive() {
     size_t b = s.find_last_not_of(" \t\r\n");
     return s.substr(a, b - a + 1);
   };
+
+#ifdef HAS_READLINE
+  bool useReadline = isatty(STDIN_FILENO);
+  if (useReadline) {
+    rl_readline_name = const_cast<char*>("cpp-repl");
+    using_history();
+    const char *home = getenv("HOME");
+    std::string histFile = home ? std::string(home) + "/.cpp_repl_history" : "";
+    if (!histFile.empty()) read_history(histFile.c_str());
+    char *raw = nullptr;
+    while (true) {
+      const char *prompt = buffer_.empty() ? "cpp> " : "...> ";
+      raw = readline(prompt);
+      if (!raw) {
+        std::cout << "\nbye\n";
+        break;
+      }
+      std::string line(raw);
+      free(raw);
+      raw = nullptr;
+      std::string t = trim(line);
+      if (buffer_.empty()) {
+        if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" ||
+            t == "exit" || t == "quit") {
+          break;
+        }
+        if (t.empty()) {
+          continue;
+        }
+        std::string err;
+        if (handleCommand(line, err)) {
+          if (!t.empty()) {
+            add_history(line.c_str());
+            if (!histFile.empty()) append_history(1, histFile.c_str());
+          }
+          continue;
+        }
+      }
+      if (!line.empty()) {
+        HIST_ENTRY *last = history_get(history_length);
+        if (!last || std::string(last->line) != line) {
+          add_history(line.c_str());
+          if (!histFile.empty()) append_history(1, histFile.c_str());
+        }
+      }
+      buffer_ += line + "\n";
+      bool incomplete = false;
+      if (!line.empty() && line.back() == '\\')
+        incomplete = true;
+      else if (isIncomplete(buffer_))
+        incomplete = true;
+      if (incomplete) {
+        continue;
+      }
+      std::string err;
+      if (!interp_.eval(buffer_, err)) {
+        if (!err.empty())
+          std::cerr << "error: " << err << "\n";
+      }
+      buffer_.clear();
+    }
+    if (!histFile.empty()) write_history(histFile.c_str());
+    return;
+  }
+#endif
+  std::string line;
   std::cout << "cpp> " << std::flush;
   while (std::getline(std::cin, line)) {
     std::string t = trim(line);

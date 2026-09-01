@@ -100,6 +100,22 @@ target_link_libraries(cpp-repl PRIVATE
 # LLVM 22 is built with -fno-exceptions -fno-rtti, ensure we match
 target_compile_options(cpp-repl PRIVATE -fno-exceptions -fno-rtti)
 
+# Readline for history / arrow navigation (up/down)
+find_library(READLINE_LIB readline)
+find_library(HISTORY_LIB history)
+find_path(READLINE_INCLUDE_DIR readline/readline.h)
+if(READLINE_LIB AND READLINE_INCLUDE_DIR)
+  message(STATUS "Readline found: ${READLINE_LIB}")
+  target_include_directories(cpp-repl PRIVATE ${READLINE_INCLUDE_DIR})
+  target_link_libraries(cpp-repl PRIVATE ${READLINE_LIB})
+  if(HISTORY_LIB)
+    target_link_libraries(cpp-repl PRIVATE ${HISTORY_LIB})
+  endif()
+  target_compile_definitions(cpp-repl PRIVATE HAS_READLINE=1)
+else()
+  message(STATUS "Readline not found, building without history support")
+endif()
+
 # Needed for JIT: export dynamic symbols + threads
 find_package(Threads REQUIRED)
 target_link_libraries(cpp-repl PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
