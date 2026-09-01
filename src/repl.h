@@ -1,3 +1,7 @@
+/**
+ * @file repl.h
+ * @brief Legacy high-level REPL wrapper.
+ */
 #ifndef CPP_REPL_REPL_H
 #define CPP_REPL_REPL_H
 
@@ -11,8 +15,11 @@ class Interpreter;
 
 namespace repl {
 
-/// High-level C++ REPL built on top of the low-level VM (clang::Interpreter
-/// which internally uses llvm::orc::LLJIT). No optimization, correctness first.
+/**
+ * @brief High-level C++ REPL built on clang::Interpreter.
+ *
+ * Uses llvm::orc::LLJIT internally, O0 and correctness first.
+ */
 class Repl {
 public:
   Repl();
@@ -21,28 +28,40 @@ public:
   Repl(const Repl &) = delete;
   Repl &operator=(const Repl &) = delete;
 
+  /** @brief Initialize the interpreter. */
   bool init(std::string &err);
 
-  // Execute a single REPL line / block. If Value is produced, it is printed.
-  // Returns false on error, true on success.
+  /**
+   * @brief Execute a REPL line or block and print Value if produced.
+   * @param code Input code.
+   * @param err Output error.
+   * @return true on success.
+   */
   bool eval(const std::string &code, std::string &err);
 
-  // REPL commands
+  /** @brief Dump history. */
   void dump() const;
+  /** @brief Reset state. */
   void reset(std::string &err);
+  /** @brief Print help. */
   void help() const;
 
-  // Load and execute a file's contents
+  /** @brief Load and execute a file. */
   bool loadFile(const std::string &path, std::string &err);
 
-  // Dynamic library loading (wraps Interpreter::LoadDynamicLibrary)
+  /** @brief Load a dynamic library. */
   bool loadLibrary(const std::string &path, std::string &err);
 
-  // Undo last N inputs (wraps Interpreter::Undo)
+  /** @brief Undo last N inputs. */
   bool undo(unsigned n, std::string &err);
 
-  // Try incremental eval: returns true if code was incomplete and should
-  // continue buffering (instead of error). Used by REPL loop.
+  /**
+   * @brief Eval with incomplete detection for REPL loop.
+   * @param code Input code.
+   * @param err Output error.
+   * @param incomplete Set if more input is needed.
+   * @return true if handled.
+   */
   bool eval(const std::string &code, std::string &err, bool &incomplete);
 
   size_t historySize() const { return history_.size(); }

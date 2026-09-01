@@ -1,3 +1,7 @@
+/**
+ * @file version_detector.cpp
+ * @brief Detects required C++ standard from source keywords.
+ */
 #include "cpp-repl/utils/version_detector.h"
 #include <algorithm>
 

@@ -1,3 +1,7 @@
+/**
+ * @file bigint.cpp
+ * @brief BigInt preamble definitions.
+ */
 #include "cpp-repl/utils/bigint.h"
 
 namespace cpprepl {

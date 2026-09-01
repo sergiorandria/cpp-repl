@@ -1,3 +1,7 @@
+/**
+ * @file vm.h
+ * @brief Legacy low-level VM wrapper.
+ */
 #ifndef CPP_REPL_VM_H
 #define CPP_REPL_VM_H
 
@@ -10,9 +14,12 @@
 
 namespace vm {
 
-/// Low-level VM wrapping llvm::orc::LLJIT.
-/// No optimizations – O0, pure execution.
-/// This is the raw execution layer; C++ REPL builds on top.
+/**
+ * @brief Low-level VM wrapping llvm::orc::LLJIT.
+ *
+ * No optimizations, O0, pure execution.
+ * Raw execution layer that the C++ REPL builds on.
+ */
 class VM {
 public:
   VM();
@@ -21,17 +28,21 @@ public:
   VM(const VM &) = delete;
   VM &operator=(const VM &) = delete;
 
-  // Initialize JIT – must be called once.
+  /** @brief Initialize JIT, must be called once. */
   bool init(std::string &err);
 
-  // Add a Module (takes ownership). Module is moved into ThreadSafeModule.
+  /**
+   * @brief Add a module to the JIT.
+   * @param M Module to move.
+   * @param Ctx Context for the module.
+   * @param err Output error.
+   * @return true on success.
+   */
   bool addModule(std::unique_ptr<llvm::Module> M,
                  std::unique_ptr<llvm::LLVMContext> Ctx, std::string &err);
 
-  // Lookup symbol address (mangled IR name)
+  /** @brief Lookup symbol address by IR name. */
   llvm::Expected<llvm::orc::ExecutorAddr> lookup(const std::string &name);
-
-  // For debugging: dump current state not needed at this level
 
   llvm::orc::LLJIT *getLLJIT() { return jit_.get(); }
 

@@ -1,3 +1,7 @@
+/**
+ * @file vm.cpp
+ * @brief Legacy VM wrapper for llvm::orc::LLJIT.
+ */
 #include "vm.h"
 
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"

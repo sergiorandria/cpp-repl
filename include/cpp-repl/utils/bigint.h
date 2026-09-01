@@ -4,22 +4,41 @@
 namespace cpprepl {
 namespace utils {
 
-// Big integer support – like Python's arbitrary large ints.
-// Uses boost::multiprecision::cpp_int (header-only) and GMP if available.
-// Scalable: header provides preamble to inject into REPL.
+/**
+ * @file bigint.h
+ * @brief Big integer support via boost::multiprecision.
+ */
+
+/**
+ * @brief Provides BigInt preamble and helpers for the REPL.
+ *
+ * Injects boost::multiprecision headers so users can write cpp_int / bigint
+ * directly without manual includes, similar to Python's big ints.
+ */
 class BigIntSupport {
 public:
-  // Preamble injected at REPL init for transparent bigint support.
-  // Users can then write: bigint x = 12345678901234567890_cpp_int; or use cpp_int directly.
+  /**
+   * @brief Preamble with cpp_int and bigint alias.
+   * @return C++ code injected at interpreter init.
+   */
   static const char *preamble();
 
-  // Alternative GMP preamble (uses mpz_int which wraps libgmp)
+  /**
+   * @brief GMP-specific preamble (mpz_int).
+   * @return C++ code for GMP backend.
+   */
   static const char *gmpPreamble();
 
-  // Check if boost headers are available (always true in our build)
+  /**
+   * @brief Check if boost headers are available.
+   * @return true if usable.
+   */
   static bool isAvailable();
 
-  // Example large number for testing
+  /**
+   * @brief Demo code for documentation and tests.
+   * @return Example snippet using big ints.
+   */
   static std::string demoCode();
 };
 

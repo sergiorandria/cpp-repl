@@ -1,17 +1,165 @@
+/**
+ * @file interpreter.cpp
+ * @brief Interpreter implementation with high-precision float printing and BigInt handling.
+ */
 #include "cpp-repl/interpreter/interpreter.h"
 #include "cpp-repl/utils/bigint.h"
+#include "cpp-repl/utils/highlight.h"
 #include "cpp-repl/utils/version_detector.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Interpreter/Interpreter.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "clang/AST/Type.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <regex>
 #include <filesystem>
 #include <algorithm>
+#include <limits>
+#include <cmath>
+#include <cstdlib>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
+namespace {
+/**
+ * @brief Helper for high-precision floating point printing.
+ *
+ * Replaces clang's default %.6g/%.8g which truncates to 6-8 digits.
+ * Uses max_digits10 (9 for float, 17 for double, 21 for long double)
+ * so printed values round-trip and preserve input precision.
+ */
+static std::string formatFloatHighPrec(float v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) {
+    ss << llvm::format("%g", v);
+  } else if (v == static_cast<float>(static_cast<int64_t>(v))) {
+    ss << llvm::format("%.1f", v);
+  } else {
+    ss << llvm::format("%#.9g", v);
+  }
+  ss << 'f';
+  return ss.str();
+}
+static std::string formatDoubleHighPrec(double v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) {
+    ss << llvm::format("%g", v);
+  } else if (v == static_cast<double>(static_cast<int64_t>(v))) {
+    ss << llvm::format("%.1f", v);
+  } else {
+    ss << llvm::format("%#.17g", v);
+  }
+  return ss.str();
+}
+static std::string formatLongDoubleHighPrec(long double v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) {
+    ss << llvm::format("%Lg", v);
+  } else if (v == static_cast<long double>(static_cast<int64_t>(v))) {
+    ss << llvm::format("%.1Lf", v);
+  } else {
+    constexpr int prec = std::numeric_limits<long double>::max_digits10;
+    std::string fmt = "%#." + std::to_string(prec) + "Lg";
+    ss << llvm::format(fmt.c_str(), v);
+  }
+  ss << 'L';
+  return ss.str();
+}
+
+static void highPrecisionDump(const clang::Value &V) {
+  if (!V.isValid() || V.isVoid())
+    return;
+  std::string typeStr;
+  {
+    llvm::raw_string_ostream ts(typeStr);
+    V.printType(ts);
+  }
+  std::string dataStr;
+  bool handled = false;
+  // Try direct Kind first – covers most prvalues
+  switch (V.getKind()) {
+  case clang::Value::K_Float:
+    dataStr = formatFloatHighPrec(V.getFloat());
+    handled = true;
+    break;
+  case clang::Value::K_Double:
+    dataStr = formatDoubleHighPrec(V.getDouble());
+    handled = true;
+    break;
+  case clang::Value::K_LongDouble:
+    dataStr = formatLongDoubleHighPrec(V.getLongDouble());
+    handled = true;
+    break;
+  default:
+    break;
+  }
+  if (!handled) {
+    // Fallback: check QualType for reference / object cases where Kind is
+    // K_PtrOrObj but the underlying type is a builtin floating type.
+    clang::QualType qt = V.getType();
+    clang::QualType nonRef = qt.getNonReferenceType();
+    const clang::Type *canon = nonRef.getCanonicalType().getTypePtr();
+    if (auto *bt = llvm::dyn_cast<clang::BuiltinType>(canon)) {
+      if (bt->getKind() == clang::BuiltinType::Float ||
+          bt->getKind() == clang::BuiltinType::Double ||
+          bt->getKind() == clang::BuiltinType::LongDouble) {
+        // Value is stored as a pointer (reference / object)
+        if (V.getKind() == clang::Value::K_PtrOrObj && V.getPtr()) {
+          void *p = V.getPtr();
+          if (bt->getKind() == clang::BuiltinType::Float) {
+            float fv = *static_cast<float *>(p);
+            dataStr = formatFloatHighPrec(fv);
+            handled = true;
+          } else if (bt->getKind() == clang::BuiltinType::Double) {
+            double dv = *static_cast<double *>(p);
+            dataStr = formatDoubleHighPrec(dv);
+            handled = true;
+          } else {
+            long double ldv = *static_cast<long double *>(p);
+            dataStr = formatLongDoubleHighPrec(ldv);
+            handled = true;
+          }
+        }
+      }
+    }
+  }
+  if (!handled) {
+    llvm::raw_string_ostream ds(dataStr);
+    V.printData(ds);
+  }
+  // Keyword highlight: colorize type and value when tty and color enabled
+  bool useColor = false;
+#ifndef _WIN32
+  useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR") && !getenv("NO_COLOUR");
+  if (useColor) {
+    const char *term = getenv("TERM");
+    if (term && std::string(term)=="dumb") useColor=false;
+  }
+  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE")) useColor = true;
+#else
+  useColor = false;
+#endif
+  if (getenv("CPP_REPL_NO_COLOR") || getenv("NO_COLOR")) useColor = false;
+  if (useColor) {
+    std::string colType = cpprepl::utils::Highlighter::highlightType(typeStr, true);
+    std::string colVal = cpprepl::utils::Highlighter::highlightValue(dataStr, true);
+    // Use llvm::outs with ANSI: wrap
+    llvm::outs() << "(\033[36m" << typeStr << "\033[0m) " << colVal << "\n";
+    // Note: colType already contains color, but we use direct for simplicity
+    (void)colType;
+  } else {
+    llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
+  }
+}
+} // namespace
 
 namespace cpprepl {
 namespace interpreter {
@@ -45,6 +193,7 @@ bool Interpreter::init(utils::StdVersion version,
   libraryPaths_ = libraryPaths;
   libraries_ = libraries;
   currentVersion_ = version;
+  stdLibIncluded_ = false;
 
   clang::IncrementalCompilerBuilder builder;
   compilerArgsStorage_.clear();
@@ -150,6 +299,9 @@ bool Interpreter::init(utils::StdVersion version,
       llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
 #endif
   }
+  // Auto-include standard library (bits/stdc++.h) by default for STL support
+  // If keyword not found, eval will retry with this. Pre-include avoids extra round-trip.
+  tryIncludeStdLib();
   // Load libraries requested via -l / --library (absolute, relative, or -l name)
   for (auto &lib : libraries_) {
     auto tryLoad = [&](const std::string &path) -> bool {
@@ -209,6 +361,7 @@ bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   history_.clear();
   variables_.clear();
   varHistory_.clear();
+  stdLibIncluded_ = false;
   if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
@@ -285,6 +438,7 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
   history_.clear();
   variables_.clear();
   varHistory_.clear();
+  stdLibIncluded_ = false;
   if (!init(needed, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
@@ -296,6 +450,46 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
     }
   }
   return true;
+}
+
+bool Interpreter::tryIncludeStdLib() {
+  if (stdLibIncluded_ || !initialized_ || !interp_) return stdLibIncluded_;
+  clang::Value V;
+  // Try bits/stdc++.h first (covers everything)
+  auto e = interp_->ParseAndExecute("#include <bits/stdc++.h>\n", &V);
+  if (!e) { stdLibIncluded_ = true; return true; }
+  llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){});
+  // Fallback: include common STL headers individually
+  const char *fallback = R"(
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cmath>
+#include <map>
+#include <set>
+#include <utility>
+#include <functional>
+#include <numeric>
+#include <iterator>
+#include <memory>
+#include <type_traits>
+#include <limits>
+#include <cstdint>
+#include <cstddef>
+)";
+  auto e2 = interp_->ParseAndExecute(fallback, &V);
+  if (!e2) { stdLibIncluded_ = true; return true; }
+  llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+  return false;
+}
+
+bool Interpreter::ensureStdLib(std::string &err) {
+  if (stdLibIncluded_) return true;
+  if (!initialized_) { err = "REPL not initialized"; return false; }
+  if (tryIncludeStdLib()) { err.clear(); return true; }
+  err = "failed to include standard library (bits/stdc++.h)";
+  return false;
 }
 
 bool Interpreter::evalAuto(const std::string &code, std::string &err) {
@@ -571,6 +765,12 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
   if (trimmed.empty())
     return true;
 
+  // Proactive stdlib: include <bits/stdc++.h> on first use of std::
+  if (!stdLibIncluded_ && sanitized.find("std::") != std::string::npos) {
+    std::string dummy;
+    ensureStdLib(dummy);
+  }
+
   if (trimmed.rfind("#include", 0) == 0) {
     size_t q1 = sanitized.find('"');
     size_t q2 = std::string::npos;
@@ -643,7 +843,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       auto e2 = interp_->ParseAndExecute(sanitized, &V2);
       if (!e2) {
         if (V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
         }
         if (!sanitized.empty()) {
@@ -661,7 +861,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       auto e2 = interp_->ParseAndExecute(withSemi, &V2);
       if (!e2) {
         if (V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
         }
         if (!sanitized.empty()) {
@@ -699,7 +899,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
               bool shouldPrint2 = true;
               if (V2.isVoid()) shouldPrint2 = false;
               else if (trimmed.find("std::cout") != std::string::npos) shouldPrint2 = false;
-              if (shouldPrint2) { V2.dump(); std::cout << "\n"; }
+              if (shouldPrint2) { highPrecisionDump(V2); std::cout << "\n"; }
             }
             if (!sanitized.empty()) {
               history_.push_back(sanitized);
@@ -762,6 +962,54 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
              "or use static_cast<np::bigint>(proxy).convert_to<double>() and "
              "static_cast<np::bigint>(a[n]) for ap*a[n]";
     }
+    // Auto-include standard library if keyword suggests missing header
+    // e.g., std::exp, std::forward, std::vector without prior include
+    if (!stdLibIncluded_ && sanitized.find("std::") != std::string::npos &&
+        (msg.find("undeclared identifier") != std::string::npos ||
+         msg.find("no member named") != std::string::npos ||
+         msg.find("has no member") != std::string::npos ||
+         msg.find("unknown type name") != std::string::npos ||
+         msg.find("use of undeclared") != std::string::npos ||
+         msg.find("implicit instantiation") != std::string::npos)) {
+      std::string dummy;
+      if (ensureStdLib(dummy)) {
+        clang::Value V2;
+        auto e2 = interp_->ParseAndExecute(toEval, &V2);
+        if (!e2) {
+          if (V2.isValid()) {
+            bool shouldPrint = true;
+            if (V2.isVoid()) shouldPrint = false;
+            else if (trimmed.find("std::cout") != std::string::npos) shouldPrint = false;
+            if (shouldPrint) { highPrecisionDump(V2); std::cout << "\n"; }
+          }
+          if (!sanitized.empty()) {
+            history_.push_back(sanitized);
+            trackVariable(sanitized);
+          }
+          std::cout << "[auto-included <bits/stdc++.h> for std:: support]\n";
+          return true;
+        }
+        llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){ msg = EIB.message(); });
+        msg += "\n[hint] tried auto-including <bits/stdc++.h> but still failed; try explicit #include <...> or check std:: usage";
+      }
+    }
+    // JIT poison recovery: Symbols not found / Failed to materialize symbols
+    if (msg.find("Symbols not found") != std::string::npos ||
+        msg.find("Failed to materialize symbols") != std::string::npos ||
+        msg.find("__orc_init_func") != std::string::npos) {
+      // Attempt to undo the poisoned increment; clang::Interpreter::Undo(1) often clears it
+      if (auto ue = interp_->Undo(1)) {
+        llvm::handleAllErrors(std::move(ue), [&](llvm::ErrorInfoBase &EIB){});
+      }
+      // Also pop last history if it was the poisoned one (if any)
+      // No push yet for this failed eval, so nothing to pop from history, but prior poisoned def may be in history
+      // Offer hint and suggest :reset if still broken
+      if (msg.find("Failed to materialize") != std::string::npos) {
+        msg += "\n[hint] JIT poisoned — auto-undo attempted. If subsequent #include still fails, run :reset or restart. Original error was likely a bad template (e.g., std::forward without <T>).";
+      } else {
+        msg += "\n[hint] Symbols not found — likely a failed template instantiation (e.g., std::forward(x) should be std::forward<T>(x)). Auto-undo attempted; try :undo or :reset.";
+      }
+    }
     err = msg;
     return false;
   }
@@ -799,7 +1047,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       }
     }
     if (shouldPrint) {
-      V.dump();
+      highPrecisionDump(V);
       std::cout << "\n";
     }
   } else {
@@ -847,7 +1095,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
               llvm::handleAllErrors(std::move(e3),
                                     [&](llvm::ErrorInfoBase &EIB) {});
           } else {
-            V2.dump();
+            highPrecisionDump(V2);
             std::cout << "\n";
           }
         } else if (e2)
@@ -964,15 +1212,27 @@ void Interpreter::reset(std::string &err) {
   history_.clear();
   variables_.clear();
   varHistory_.clear();
+  stdLibIncluded_ = false;
   if (!init(currentVersion_, local))
     err = local;
   else
     err.clear();
 }
 void Interpreter::help() const {
+  // Show prompt help with color hint when stdout is a tty
+  bool useColor = isatty(STDOUT_FILENO) &&
+                  !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+  const char *term = getenv("TERM");
+  if (useColor && term && std::string(term) == "dumb") useColor = false;
+  auto col = [&](const char* code)->std::string { return useColor ? code : ""; };
+  auto rst = col("\033[0m");
+  auto cyan = col("\033[36m");
+  auto grey = col("\033[90m");
   std::cout << "C++ REPL (LLVM VM, O0, no optimizations) ["
             << utils::VersionDetector::toString(currentVersion_)
             << "]\n"
+               "Prompt: " + cyan + "cpp" + rst + grey + ":" + rst + cyan + utils::VersionDetector::toString(currentVersion_) + rst + grey + " [n] (time " + rst + col("\033[32m") + "✓" + rst + grey + "/" + rst + col("\033[31m") + "✗" + rst + grey + ")" + rst + grey + ">" + rst + "  colored, shows C++ version, input count & last exec time\n"
+               "        use " + grey + "--no-color" + rst + " or " + grey + "NO_COLOR=1" + rst + " to disable, " + grey + "FORCE_COLOR=1" + rst + " to force\n"
                "Commands:\n"
                "  :help  :h       show this help\n"
                "  :quit  :exit :q exit REPL\n"
@@ -1005,7 +1265,8 @@ void Interpreter::help() const {
                "C++20/23: auto-detects 'concept', 'requires', 'import' etc. "
                "and switches to -std=c++20/23\n"
                "\n"
-               "Multiline: unbalanced { ( [ keeps buffering with ...> prompt\n";
+               "Multiline: unbalanced { ( [ keeps buffering with " + col("\033[33m") + "...>" + rst + " prompt\n"
+               "Timing:  " + grey + "⏱" + rst + " line after each exec + inline in next prompt (e.g. " + grey + "(12.3ms ✓)" + rst + ")\n";
 }
 
 } // namespace interpreter

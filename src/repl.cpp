@@ -1,3 +1,7 @@
+/**
+ * @file repl.cpp
+ * @brief Legacy REPL wrapper (kept for compatibility) with high-precision printing.
+ */
 #include "repl.h"
 
 #include "clang/Frontend/CompilerInstance.h"
@@ -5,11 +9,75 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "clang/AST/Type.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <limits>
+#include <cmath>
+
+namespace {
+static std::string formatFloatHighPrec(float v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) ss << llvm::format("%g", v);
+  else if (v == static_cast<float>(static_cast<int64_t>(v))) ss << llvm::format("%.1f", v);
+  else ss << llvm::format("%#.9g", v);
+  ss << 'f';
+  return ss.str();
+}
+static std::string formatDoubleHighPrec(double v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) ss << llvm::format("%g", v);
+  else if (v == static_cast<double>(static_cast<int64_t>(v))) ss << llvm::format("%.1f", v);
+  else ss << llvm::format("%#.17g", v);
+  return ss.str();
+}
+static std::string formatLongDoubleHighPrec(long double v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) ss << llvm::format("%Lg", v);
+  else if (v == static_cast<long double>(static_cast<int64_t>(v))) ss << llvm::format("%.1Lf", v);
+  else {
+    constexpr int prec = std::numeric_limits<long double>::max_digits10;
+    std::string fmt = "%#." + std::to_string(prec) + "Lg";
+    ss << llvm::format(fmt.c_str(), v);
+  }
+  ss << 'L';
+  return ss.str();
+}
+static void highPrecisionDump(const clang::Value &V) {
+  if (!V.isValid() || V.isVoid()) return;
+  std::string typeStr;
+  { llvm::raw_string_ostream ts(typeStr); V.printType(ts); }
+  std::string dataStr;
+  bool handled = false;
+  switch (V.getKind()) {
+  case clang::Value::K_Float: dataStr = formatFloatHighPrec(V.getFloat()); handled = true; break;
+  case clang::Value::K_Double: dataStr = formatDoubleHighPrec(V.getDouble()); handled = true; break;
+  case clang::Value::K_LongDouble: dataStr = formatLongDoubleHighPrec(V.getLongDouble()); handled = true; break;
+  default: break;
+  }
+  if (!handled) {
+    clang::QualType qt = V.getType();
+    clang::QualType nonRef = qt.getNonReferenceType();
+    const clang::Type *canon = nonRef.getCanonicalType().getTypePtr();
+    if (auto *bt = llvm::dyn_cast<clang::BuiltinType>(canon)) {
+      if ((bt->getKind() == clang::BuiltinType::Float || bt->getKind() == clang::BuiltinType::Double || bt->getKind() == clang::BuiltinType::LongDouble) && V.getKind() == clang::Value::K_PtrOrObj && V.getPtr()) {
+        void *p = V.getPtr();
+        if (bt->getKind() == clang::BuiltinType::Float) { dataStr = formatFloatHighPrec(*static_cast<float*>(p)); handled = true; }
+        else if (bt->getKind() == clang::BuiltinType::Double) { dataStr = formatDoubleHighPrec(*static_cast<double*>(p)); handled = true; }
+        else { dataStr = formatLongDoubleHighPrec(*static_cast<long double*>(p)); handled = true; }
+      }
+    }
+  }
+  if (!handled) { llvm::raw_string_ostream ds(dataStr); V.printData(ds); }
+  llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
+}
+} // namespace
 
 namespace repl {
 
@@ -124,7 +192,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
       auto e2 = interp_->ParseAndExecute(code, &V2);
       if (!e2) {
         if (V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
         }
         if (!code.empty())
@@ -142,7 +210,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
       auto e2 = interp_->ParseAndExecute(withSemi, &V2);
       if (!e2) {
         if (V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
         }
         if (!code.empty())
@@ -169,7 +237,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
       shouldPrint = false;
     }
     if (shouldPrint) {
-      V.dump();
+      highPrecisionDump(V);
       std::cout << "\n";
     }
   } else {
@@ -199,7 +267,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
         clang::Value V2;
         auto e2 = interp_->ParseAndExecute(stripped, &V2);
         if (!e2 && V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
           // Undo the just-executed expression's PTU side-effect? We already
           // executed original "x;" which was no-op value, so duplicate
