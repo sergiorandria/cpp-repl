@@ -109,6 +109,7 @@ add_executable(cpp-repl
   src/interpreter/interpreter.cpp
   src/utils/version_detector.cpp
   src/utils/bigint.cpp
+  src/utils/highlight.cpp
   src/repl/session.cpp
   src/cli/cli.cpp
 )

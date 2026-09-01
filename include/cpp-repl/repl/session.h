@@ -65,6 +65,8 @@ private:
   std::string buildContinuationPrompt(bool forReadline) const;
   /** @brief Print timing line after execution. */
   void printTimingLine(bool success, double ms) const;
+  /** @brief Print highlighted echo of executed code (if color enabled). */
+  void printHighlightedEcho(const std::string &code) const;
 
   interpreter::Interpreter &interp_; ///< Bound interpreter instance.
   std::string buffer_; ///< Current multiline buffer.

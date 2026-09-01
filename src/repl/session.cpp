@@ -3,6 +3,7 @@
  * @brief Interactive session loop and command handling.
  */
 #include "cpp-repl/repl/session.h"
+#include "cpp-repl/utils/highlight.h"
 #include "cpp-repl/utils/version_detector.h"
 #include <chrono>
 #include <iomanip>
@@ -155,6 +156,31 @@ void Session::printTimingLine(bool success, double ms) const {
     std::cout << "⏱  " << t << (success ? " ok" : " err") << "\n";
   }
   std::cout << std::flush;
+}
+
+void Session::printHighlightedEcho(const std::string &code) const {
+#ifdef _WIN32
+  bool isTTY = _isatty(_fileno(stdout)) != 0;
+#else
+  bool isTTY = isatty(STDOUT_FILENO) != 0;
+#endif
+  if (!isTTY) return;
+  bool color = shouldUseColor(false);
+  if (!color) return;
+  // Trim and limit to single-line preview (80 cols) for non-intrusive echo
+  std::string preview = code;
+  // Remove trailing newlines/spaces
+  while (!preview.empty() && (preview.back()=='\n' || preview.back()=='\r' || preview.back()==' ' || preview.back()=='\t')) preview.pop_back();
+  // Collapse internal newlines to " ⏎ " for preview
+  for (char &c : preview) if (c=='\n' || c=='\r') c=' ';
+  // Trim leading spaces
+  size_t s = preview.find_first_not_of(" \t");
+  if (s!=std::string::npos) preview = preview.substr(s);
+  if (preview.empty()) return;
+  if (preview.size() > 120) preview = preview.substr(0, 117) + "...";
+  std::string highlighted = utils::Highlighter::highlight(preview, true);
+  // Print dim grey arrow + highlighted code after execution
+  std::cout << "\033[90m  \u25B8 \033[0m" << highlighted << "\n" << std::flush;
 }
 
 bool Session::isIncomplete(const std::string &buffer) const {
@@ -455,6 +481,8 @@ void Session::runInteractive() {
       lastDurationMs_ = ms;
       lastSuccess_ = ok;
       hasLastTiming_ = true;
+      // Keyword highlight: echo executed code with syntax colors (after execution)
+      printHighlightedEcho(buffer_);
       if (!ok) {
         if (!err.empty()) printError(err);
         printTimingLine(false, ms);
@@ -504,6 +532,7 @@ void Session::runInteractive() {
     lastDurationMs_ = ms;
     lastSuccess_ = ok;
     hasLastTiming_ = true;
+    printHighlightedEcho(buffer_);
     if (!ok) {
       if (!err.empty()) printError(err);
       printTimingLine(false, ms);

@@ -4,6 +4,7 @@
  */
 #include "cpp-repl/interpreter/interpreter.h"
 #include "cpp-repl/utils/bigint.h"
+#include "cpp-repl/utils/highlight.h"
 #include "cpp-repl/utils/version_detector.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Interpreter/Interpreter.h"
@@ -134,7 +135,29 @@ static void highPrecisionDump(const clang::Value &V) {
     llvm::raw_string_ostream ds(dataStr);
     V.printData(ds);
   }
-  llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
+  // Keyword highlight: colorize type and value when tty and color enabled
+  bool useColor = false;
+#ifndef _WIN32
+  useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR") && !getenv("NO_COLOUR");
+  if (useColor) {
+    const char *term = getenv("TERM");
+    if (term && std::string(term)=="dumb") useColor=false;
+  }
+  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE")) useColor = true;
+#else
+  useColor = false;
+#endif
+  if (getenv("CPP_REPL_NO_COLOR") || getenv("NO_COLOR")) useColor = false;
+  if (useColor) {
+    std::string colType = cpprepl::utils::Highlighter::highlightType(typeStr, true);
+    std::string colVal = cpprepl::utils::Highlighter::highlightValue(dataStr, true);
+    // Use llvm::outs with ANSI: wrap
+    llvm::outs() << "(\033[36m" << typeStr << "\033[0m) " << colVal << "\n";
+    // Note: colType already contains color, but we use direct for simplicity
+    (void)colType;
+  } else {
+    llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
+  }
 }
 } // namespace
 
