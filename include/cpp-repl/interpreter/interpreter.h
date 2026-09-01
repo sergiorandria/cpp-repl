@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "cpp-repl/utils/i_variable_tracker.h"
 #include "cpp-repl/utils/version_detector.h"
 
 namespace clang {
@@ -161,6 +162,10 @@ private:
   bool ensureStdLib(std::string &err);
   /** @brief Try to include bits/stdc++.h or fallback headers. */
   bool tryIncludeStdLib();
+  // --- Scalable interfaces (Strategy pattern) ---
+  // Variable tracking via interface (avoids unordered_map churn, testable)
+  std::unique_ptr<utils::IVariableTracker> tracker_;
+  // History for replay uses Result pattern internally, but keep bool+string API for compat
   std::unique_ptr<clang::Interpreter> interp_;
   bool initialized_ = false;
   std::vector<std::string> history_;
@@ -170,6 +175,7 @@ private:
   std::vector<std::string> libraryPaths_;
   std::vector<std::string> libraries_;
   std::vector<std::string> compilerArgsStorage_;
+  // Legacy map kept for ABI compat, now delegated to tracker_
   std::unordered_map<std::string, std::pair<std::string, std::string>> variables_;
   std::vector<std::unordered_map<std::string, std::pair<std::string, std::string>>> varHistory_;
   bool stdLibIncluded_ = false;
