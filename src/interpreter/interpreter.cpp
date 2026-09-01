@@ -161,7 +161,7 @@ static void highPrecisionDump(const clang::Value &V) {
 namespace cpprepl {
 namespace interpreter {
 
-Interpreter::Interpreter() = default;
+Interpreter::Interpreter() : tracker_(utils::VariableTrackerFactory::create()) {}
 Interpreter::~Interpreter() = default;
 
 bool Interpreter::init(utils::StdVersion version,
@@ -368,6 +368,7 @@ bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   initialized_ = false;
   history_.clear();
   variables_.clear();
+  tracker_->clear();
   varHistory_.clear();
   stdLibIncluded_ = false;
   if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
@@ -445,6 +446,7 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
   initialized_ = false;
   history_.clear();
   variables_.clear();
+  tracker_->clear();
   varHistory_.clear();
   stdLibIncluded_ = false;
   if (!init(needed, includePaths_, defines_, libraryPaths_, libraries_, local)) {
@@ -723,15 +725,14 @@ bool Interpreter::checkVariableRedefinition(const std::string &code, std::string
     return true;
   std::string type, name, value;
   if (parseDeclaration(trimmed, type, name, value)) {
-    auto it = variables_.find(name);
-    if (it != variables_.end()) {
-      std::string prevType = it->second.first;
-      std::string prevVal = it->second.second;
-      if (prevType == type && prevVal == value) {
+    utils::VarInfo info{type, value};
+    auto prev = tracker_->find(name);
+    if (prev) {
+      if (prev->type == type && prev->value == value) {
         std::cout << "[ignored: redefinition of '" << name << "' with same value " << value << " (type " << type << ")]\n";
         return false;
       } else {
-        err = "redefinition of '" + name + "' with different value (previous: " + prevVal + " [" + prevType + "] vs new: " + value + " [" + type + "])";
+        err = "redefinition of '" + name + "' with different value (previous: " + prev->value + " [" + prev->type + "] vs new: " + value + " [" + type + "])";
         err += " [hint: same name & same value is allowed and ignored]";
         return false;
       }
@@ -748,6 +749,7 @@ void Interpreter::trackVariable(const std::string &code) {
   if (parseDeclaration(trimmed, type, name, value)) {
     varHistory_.push_back(variables_);
     variables_[name] = {type, value};
+    tracker_->track(name, {type, value});
     return;
   }
   std::string aName, aVal;
@@ -756,6 +758,7 @@ void Interpreter::trackVariable(const std::string &code) {
     if (it != variables_.end()) {
       varHistory_.push_back(variables_);
       it->second.second = aVal;
+      tracker_->track(aName, {it->second.first, aVal});
     }
   }
 }
@@ -1173,15 +1176,20 @@ bool Interpreter::undo(unsigned n, std::string &err) {
   while (n-- > 0 && !history_.empty())
     history_.pop_back();
   variables_.clear();
+  tracker_->clear();
   for (auto &h : history_) {
     std::string type, name, value;
     if (parseDeclaration(h, type, name, value)) {
       variables_[name] = {type, value};
+      tracker_->track(name, {type, value});
     } else {
       std::string aName, aVal;
       if (parseAssignment(h, aName, aVal)) {
         auto it = variables_.find(aName);
-        if (it != variables_.end()) it->second.second = aVal;
+        if (it != variables_.end()) {
+          it->second.second = aVal;
+          tracker_->track(aName, {it->second.first, aVal});
+        }
       }
     }
   }
@@ -1206,6 +1214,7 @@ void Interpreter::reset(std::string &err) {
   initialized_ = false;
   history_.clear();
   variables_.clear();
+  tracker_->clear();
   varHistory_.clear();
   stdLibIncluded_ = false;
   if (!init(currentVersion_, local))
