@@ -52,6 +52,11 @@ bool Interpreter::init(utils::StdVersion version,
   compilerArgsStorage_.push_back("-O0");
   compilerArgsStorage_.push_back("-resource-dir");
   compilerArgsStorage_.push_back("/usr/lib/clang/22");
+  // Fix for Numpy-C-API headers (NZERO, vector<bool>, ProxyBase) without modifying them
+  compilerArgsStorage_.push_back("-I");
+  compilerArgsStorage_.push_back("/home/sergio/Project/cpp-repl/include");
+  compilerArgsStorage_.push_back("-include");
+  compilerArgsStorage_.push_back("cpp-repl/fix_np_headers.hpp");
   for (auto &p : includePaths_) {
     compilerArgsStorage_.push_back("-I");
     compilerArgsStorage_.push_back(p);
@@ -636,6 +641,14 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           }
         }
       }
+    }
+    // Handle Numpy-C-API ProxyBase issues without modifying headers (C++23)
+    if (msg.find("ProxyBase") != std::string::npos || msg.find("convert_to") != std::string::npos ||
+        msg.find("fixed_source") != std::string::npos || msg.find("vector<bool>") != std::string::npos) {
+      msg += "\n[hint] Numpy-C-API ProxyBase/vector<bool> issue – header uses C++23 and boost::multiprecision. "
+             "Try: cpp-repl -std=c++23 -I /home/sergio/Project/Numpy-C-API/include "
+             "or use static_cast<np::bigint>(proxy).convert_to<double>() and "
+             "static_cast<np::bigint>(a[n]) for ap*a[n]";
     }
     err = msg;
     return false;

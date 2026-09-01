@@ -32,10 +32,10 @@ public:
             const std::vector<std::string> &libraries,
             std::string &err);
   bool init(utils::StdVersion version, std::string &err);
-  bool init(std::string &err) { return init(utils::StdVersion::Cpp17, err); }
+  bool init(std::string &err) { return init(utils::StdVersion::Cpp23, err); }
   bool init(const std::vector<std::string> &includePaths,
             const std::vector<std::string> &defines, std::string &err) {
-    return init(utils::StdVersion::Cpp17, includePaths, defines, err);
+    return init(utils::StdVersion::Cpp23, includePaths, defines, err);
   }
 
   // Dynamic include/library handling (interactive :I, :L)

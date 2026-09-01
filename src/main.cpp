@@ -78,10 +78,10 @@ int main(int argc, char **argv) {
   // --- C++ REPL (interpreter with auto version + bigint + include/lib) ---
   cpprepl::interpreter::Interpreter interp;
   std::string err;
-  // Start with C++20 (modern headers like np.hpp need source_location/format/requires)
-  // Will auto-upgrade to C++23 when needed
+  // Start with C++23 (np.hpp and modern headers need it)
+  // Will auto-downgrade if needed, but C++23 is safest for np headers
   // Pass include/library paths from cmdline (absolute & relative)
-  if (!interp.init(cpprepl::utils::StdVersion::Cpp20, opts.includePaths,
+  if (!interp.init(cpprepl::utils::StdVersion::Cpp23, opts.includePaths,
                    opts.defines, opts.libraryPaths, opts.libraries, err)) {
     std::cerr << "REPL init failed: " << err << "\n";
     return 1;
