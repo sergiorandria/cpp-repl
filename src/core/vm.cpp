@@ -1,3 +1,7 @@
+/**
+ * @file vm.cpp
+ * @brief LLJITVM implementation - thin wrapper over llvm::orc::LLJIT.
+ */
 #include "cpp-repl/core/vm.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"

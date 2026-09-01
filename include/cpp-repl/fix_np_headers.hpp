@@ -1,7 +1,10 @@
+/**
+ * @file fix_np_headers.hpp
+ * @brief Force-included fixes for Numpy-C-API headers.
+ *
+ * Handles NZERO/PZERO clashes and ProxyBase compatibility without modifying upstream headers.
+ */
 #pragma once
-// Comprehensive fix for Numpy-C-API headers in cpp-repl
-// Force-included via -include before any user code
-// Handles NZERO/PZERO, vector<bool>, ProxyBase without modifying headers
 
 // 1. NZERO/PZERO clash
 #ifdef NZERO

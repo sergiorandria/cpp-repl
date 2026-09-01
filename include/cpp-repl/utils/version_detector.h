@@ -5,20 +5,37 @@
 namespace cpprepl {
 namespace utils {
 
+/**
+ * @file version_detector.h
+ * @brief Automatic C++ standard detection.
+ */
+
+/**
+ * @brief Supported C++ standards.
+ */
 enum class StdVersion {
-  Cpp17 = 17,
-  Cpp20 = 20,
-  Cpp23 = 23
+  Cpp17 = 17, ///< C++17
+  Cpp20 = 20, ///< C++20
+  Cpp23 = 23  ///< C++23
 };
 
+/**
+ * @brief Detects required C++ standard from source keywords.
+ */
 class VersionDetector {
 public:
-  // Auto-detect required C++ standard from code keywords.
-  // Like python's future imports, but for C++.
+  /**
+   * @brief Detect standard needed for given code.
+   * @param code Source snippet to inspect.
+   * @return Required StdVersion (minimum is Cpp17).
+   */
   static StdVersion detect(const std::string &code);
 
+  /** @brief Convert version to compiler flag, e.g. -std=c++20. */
   static std::string toFlag(StdVersion v);
+  /** @brief Convert version to human string, e.g. C++20. */
   static std::string toString(StdVersion v);
+  /** @brief Human description with features. */
   static std::string describe(StdVersion v);
 
 private:
@@ -26,7 +43,9 @@ private:
   static bool containsWord(const std::string &code, const std::string &word);
 };
 
-// Helper to get current interpreter version as string for diagnostics
+/**
+ * @brief Return the maximum of two versions.
+ */
 StdVersion maxVersion(StdVersion a, StdVersion b);
 
 } // namespace utils

@@ -1,3 +1,7 @@
+/**
+ * @file cli.cpp
+ * @brief CLI parsing implementation for cpp-repl.
+ */
 #include "cpp-repl/cli/cli.h"
 #include <iostream>
 

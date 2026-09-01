@@ -1,3 +1,7 @@
+/**
+ * @file session.cpp
+ * @brief Interactive session loop and command handling.
+ */
 #include "cpp-repl/repl/session.h"
 #include <iostream>
 #include <string>
@@ -298,13 +302,6 @@ void Session::runInteractive() {
           continue;
         }
       }
-      if (!line.empty()) {
-        HIST_ENTRY *last = history_get(history_length);
-        if (!last || std::string(last->line) != line) {
-          add_history(line.c_str());
-          if (!histFile.empty()) append_history(1, histFile.c_str());
-        }
-      }
       buffer_ += line + "\n";
       bool incomplete = false;
       if (!line.empty() && line.back() == '\\')
@@ -313,6 +310,23 @@ void Session::runInteractive() {
         incomplete = true;
       if (incomplete) {
         continue;
+      }
+      // Complete input ready: store entire buffer as single history entry
+      // so that up/down navigation recalls whole function bodies at once
+      // instead of line-by-line. This makes a multi-line function definition
+      // (e.g. "int foo() {\n  return 42;\n}") appear as one history item.
+      {
+        std::string histEntry = buffer_;
+        while (!histEntry.empty() &&
+               (histEntry.back() == '\n' || histEntry.back() == '\r'))
+          histEntry.pop_back();
+        if (!histEntry.empty()) {
+          HIST_ENTRY *last = history_get(history_length);
+          if (!last || histEntry != last->line) {
+            add_history(histEntry.c_str());
+            if (!histFile.empty()) append_history(1, histFile.c_str());
+          }
+        }
       }
       std::string err;
       if (!interp_.eval(buffer_, err)) {

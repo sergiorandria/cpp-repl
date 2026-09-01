@@ -1,3 +1,7 @@
+/**
+ * @file main.cpp
+ * @brief Entry point for cpp-repl - CLI, VM scaffold, and REPL session.
+ */
 #include "cpp-repl/cli/cli.h"
 #include "cpp-repl/core/vm.h"
 #include "cpp-repl/interpreter/interpreter.h"

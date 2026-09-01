@@ -1,6 +1,9 @@
+/**
+ * @file fix_proxy.hpp
+ * @brief Patch for np::ProxyBase to support convert_to and operators.
+ */
 #pragma once
-// Fix for np::ProxyBase with boost::multiprecision and other types
-// Force-included via -include before any user code to patch ProxyBase
+/** @brief Force-included fix for ProxyBase with boost::multiprecision. */
 
 #include <type_traits>
 #include <utility>
