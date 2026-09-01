@@ -91,10 +91,13 @@ bool VersionDetector::containsWord(const std::string &code,
 
 StdVersion VersionDetector::detect(const std::string &code) {
   std::string stripped = stripCommentsAndStrings(code);
-  // C++23 keywords – check stripped
+  // C++23 keywords – check stripped (import/export + module)
   if (contains(stripped, "import ") || contains(stripped, "module ") ||
-      containsWord(stripped, "import") || containsWord(stripped, "export")) {
-    if (stripped.find("import") != std::string::npos)
+      containsWord(stripped, "import") || containsWord(stripped, "export") ||
+      containsWord(stripped, "module")) {
+    if (stripped.find("import") != std::string::npos ||
+        stripped.find("export") != std::string::npos ||
+        stripped.find("module") != std::string::npos)
       return StdVersion::Cpp23;
   }
   // C++20 keywords (including headers that require C++20)
