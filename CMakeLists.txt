@@ -18,13 +18,43 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}")
 message(STATUS "LLVM includes: ${LLVM_INCLUDE_DIRS}")
 
 # Clang package on Arch has version mismatch (LLVM 22.1.3 vs Clang 22.1.8).
-# Bypass strict find_package(Clang) which requires EXACT match.
-# Instead locate clang manually via clang-cpp shared lib.
-find_library(CLANG_CPP_LIB clang-cpp HINTS /usr/lib)
+# Bypass strict find_package(Clang) which requires EXACT match (ClangConfig does
+# find_package(LLVM EXACT REQUIRED) and fails on Arch). Instead locate clang
+# manually via clang-cpp shared lib. Support both Arch (/usr/lib) and Ubuntu
+# apt.llvm.org (/usr/lib/llvm-22/lib, /usr/lib/x86_64-linux-gnu) layouts.
+find_library(CLANG_CPP_LIB NAMES clang-cpp clang-cpp-22
+  HINTS
+    /usr/lib
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/llvm-22/lib
+    /usr/lib/llvm/lib
+    ${LLVM_LIBRARY_DIRS}
+    ${LLVM_LIBRARY_DIR}
+    ${LLVM_DIR}/../..
+    ${LLVM_DIR}/../../..
+  PATHS
+    /usr/lib
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/llvm-22/lib
+)
 if(NOT CLANG_CPP_LIB)
-  message(FATAL_ERROR "clang-cpp not found")
+  message(FATAL_ERROR "clang-cpp not found. Searched HINTS: /usr/lib, /usr/lib/x86_64-linux-gnu, /usr/lib/llvm-22/lib, LLVM dirs ${LLVM_LIBRARY_DIRS} ${LLVM_LIBRARY_DIR}")
 endif()
-set(CLANG_INCLUDE_DIRS /usr/include)
+# Find clang headers: try multiple common locations
+find_path(CLANG_INCLUDE_DIRS NAMES clang/Basic/Version.h
+  HINTS
+    /usr/include
+    /usr/lib/llvm-22/include
+    /usr/lib/llvm/include
+    ${LLVM_INCLUDE_DIRS}
+    ${LLVM_INCLUDE_DIRS}/..
+  PATHS
+    /usr/include
+    /usr/lib/llvm-22/include
+)
+if(NOT CLANG_INCLUDE_DIRS)
+  set(CLANG_INCLUDE_DIRS /usr/include)
+endif()
 message(STATUS "Using clang-cpp: ${CLANG_CPP_LIB}")
 message(STATUS "Clang includes: ${CLANG_INCLUDE_DIRS}")
 
@@ -35,7 +65,22 @@ add_definitions(${LLVM_DEFINITIONS})
 
 # LLVM libs we need – low level VM
 # Arch ships single libLLVM-22.so, not split libs. Use that.
-find_library(LLVM_SINGLE_LIB LLVM-22 HINTS /usr/lib /usr/lib/llvm)
+# Ubuntu apt.llvm.org ships it at /usr/lib/llvm-22/lib/libLLVM-22.so
+find_library(LLVM_SINGLE_LIB NAMES LLVM-22 LLVM
+  HINTS
+    /usr/lib
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/llvm-22/lib
+    /usr/lib/llvm/lib
+    ${LLVM_LIBRARY_DIRS}
+    ${LLVM_LIBRARY_DIR}
+    ${LLVM_DIR}/../..
+    ${LLVM_DIR}/../../..
+  PATHS
+    /usr/lib
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/llvm-22/lib
+)
 if(LLVM_SINGLE_LIB)
   set(LLVM_LIBS ${LLVM_SINGLE_LIB})
 else()
