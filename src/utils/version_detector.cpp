@@ -93,14 +93,18 @@ StdVersion VersionDetector::detect(const std::string &code) {
     if (stripped.find("import") != std::string::npos)
       return StdVersion::Cpp23;
   }
-  // C++20 keywords
+  // C++20 keywords (including headers that require C++20)
   if (containsWord(stripped, "concept") || containsWord(stripped, "requires") ||
       containsWord(stripped, "co_await") ||
       containsWord(stripped, "co_yield") ||
       containsWord(stripped, "co_return") ||
       containsWord(stripped, "char8_t") || contains(stripped, "<=>") ||
       containsWord(stripped, "consteval") ||
-      containsWord(stripped, "constinit")) {
+      containsWord(stripped, "constinit") ||
+      containsWord(stripped, "source_location") ||
+      containsWord(stripped, "format") ||
+      contains(stripped, "std::format") ||
+      contains(stripped, "std::source_location")) {
     return StdVersion::Cpp20;
   }
   return StdVersion::Cpp17;
