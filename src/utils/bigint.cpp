@@ -6,20 +6,31 @@ namespace utils {
 const char *BigIntSupport::preamble() {
   return R"CPP(
 #include <boost/multiprecision/cpp_int.hpp>
+#include <boost/multiprecision/cpp_dec_float.hpp>
+#include <boost/multiprecision/cpp_bin_float.hpp>
 using boost::multiprecision::cpp_int;
+using boost::multiprecision::cpp_dec_float_50;
+using boost::multiprecision::cpp_bin_float_50;
 using bigint = cpp_int;
-// Python-like big ints: e.g. cpp_int x = cpp_int("123456789012345678901234567890");
+using bigfloat = cpp_dec_float_50;
+using cpp_bin_float = boost::multiprecision::cpp_bin_float_50;
+// Python-like big ints/floats: e.g. cpp_int x = cpp_int("123..."); bigfloat y = bigfloat("3.14159...")
 // Large literals like bigint g = 4949... (50 digits) are auto-wrapped to bigint("...")
+// and bigfloat f = 3.14159... (30+ digits) to bigfloat("3.14159...")
 )CPP";
 }
 
 const char *BigIntSupport::gmpPreamble() {
   return R"CPP(
 #include <boost/multiprecision/gmp.hpp>
+#include <boost/multiprecision/mpfr.hpp>
 using boost::multiprecision::mpz_int;
 using boost::multiprecision::mpq_rational;
+using boost::multiprecision::mpfr_float_50;
+using boost::multiprecision::mpfr_float_100;
 using mpz = boost::multiprecision::mpz_int;
 using mpq = boost::multiprecision::mpq_rational;
+using bigfloat_mpfr = boost::multiprecision::mpfr_float_50;
 )CPP";
 }
 

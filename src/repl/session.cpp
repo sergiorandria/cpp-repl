@@ -19,20 +19,43 @@ bool Session::exec(const std::string &code, std::string &err) {
 
 bool Session::isIncomplete(const std::string &buffer) const {
   int braces = 0, parens = 0, brackets = 0;
-  for (char c : buffer) {
-    if (c == '{')
-      ++braces;
-    else if (c == '}')
-      --braces;
-    else if (c == '(')
-      ++parens;
-    else if (c == ')')
-      --parens;
-    else if (c == '[')
-      ++brackets;
-    else if (c == ']')
-      --brackets;
+  bool inSingle = false, inDouble = false, inLineComment = false, inBlockComment = false;
+  bool escaped = false;
+  for (size_t i = 0; i < buffer.size(); ++i) {
+    char c = buffer[i];
+    char n = (i + 1 < buffer.size()) ? buffer[i + 1] : '\0';
+    if (inLineComment) {
+      if (c == '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (c == '*' && n == '/') { inBlockComment = false; ++i; }
+      continue;
+    }
+    if (inSingle) {
+      if (escaped) escaped = false;
+      else if (c == '\\') escaped = true;
+      else if (c == '\'') inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (escaped) escaped = false;
+      else if (c == '\\') escaped = true;
+      else if (c == '"') inDouble = false;
+      continue;
+    }
+    if (c == '/' && n == '/') { inLineComment = true; ++i; continue; }
+    if (c == '/' && n == '*') { inBlockComment = true; ++i; continue; }
+    if (c == '\'') { inSingle = true; continue; }
+    if (c == '"') { inDouble = true; continue; }
+    if (c == '{') ++braces;
+    else if (c == '}') --braces;
+    else if (c == '(') ++parens;
+    else if (c == ')') --parens;
+    else if (c == '[') ++brackets;
+    else if (c == ']') --brackets;
   }
+  if (inDouble || inSingle || inBlockComment) return true;
   return braces > 0 || parens > 0 || brackets > 0;
 }
 

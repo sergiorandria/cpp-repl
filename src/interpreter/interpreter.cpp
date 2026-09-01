@@ -51,10 +51,52 @@ bool Interpreter::init(utils::StdVersion version,
   compilerArgsStorage_.push_back(utils::VersionDetector::toFlag(version));
   compilerArgsStorage_.push_back("-O0");
   compilerArgsStorage_.push_back("-resource-dir");
-  compilerArgsStorage_.push_back("/usr/lib/clang/22");
+#ifndef CLANG_RESOURCE_DIR
+#define CLANG_RESOURCE_DIR "/usr/lib/clang/22"
+#endif
+  {
+    std::string resDir = CLANG_RESOURCE_DIR;
+    // Runtime fallback: if configured dir doesn't exist, probe common layouts
+    std::error_code ec;
+    if (!std::filesystem::exists(resDir, ec)) {
+      const std::vector<std::string> candidates = {
+        "/usr/lib/llvm-22/lib/clang/22",
+        "/usr/lib/clang/22",
+        "/usr/lib/llvm/lib/clang/22",
+        "/usr/lib/llvm-22/lib/clang/22"
+      };
+      for (auto &c : candidates) {
+        if (std::filesystem::exists(c, ec)) { resDir = c; break; }
+      }
+    }
+    compilerArgsStorage_.push_back(resDir);
+  }
   // Fix for Numpy-C-API headers (NZERO, vector<bool>, ProxyBase) without modifying them
-  compilerArgsStorage_.push_back("-I");
-  compilerArgsStorage_.push_back("/home/sergio/Project/cpp-repl/include");
+#ifndef CPP_REPL_INCLUDE_DIR
+#define CPP_REPL_INCLUDE_DIR "/usr/include"
+#endif
+  {
+    std::string projInc = CPP_REPL_INCLUDE_DIR;
+    std::error_code ec;
+    if (std::filesystem::exists(projInc, ec)) {
+      compilerArgsStorage_.push_back("-I");
+      compilerArgsStorage_.push_back(projInc);
+    } else {
+      // Fallback: try relative to current binary or common install prefix
+      // Use project source dir probed at runtime if possible
+      if (std::filesystem::exists("include/cpp-repl/fix_np_headers.hpp", ec)) {
+        compilerArgsStorage_.push_back("-I");
+        compilerArgsStorage_.push_back("include");
+      } else if (std::filesystem::exists("/usr/include/cpp-repl/fix_np_headers.hpp", ec)) {
+        compilerArgsStorage_.push_back("-I");
+        compilerArgsStorage_.push_back("/usr/include");
+      } else {
+        // Last resort: still add configured path (clang will ignore if missing)
+        compilerArgsStorage_.push_back("-I");
+        compilerArgsStorage_.push_back(projInc);
+      }
+    }
+  }
   compilerArgsStorage_.push_back("-include");
   compilerArgsStorage_.push_back("cpp-repl/fix_np_headers.hpp");
   for (auto &p : includePaths_) {
@@ -545,7 +587,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       bool exists = std::filesystem::exists(incPath, ec);
       bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
       if (!ec && exists && isDir) {
-        err = "fatal error: '" + incPath + "' is a directory, not a file [hint] Did you mean '" + incPath + "/np.hpp'? Use -I /home/sergio/Project/Numpy-C-API/include and #include \"np/np.hpp\" or #include <np/np.hpp>. Available: ";
+        err = "fatal error: '" + incPath + "' is a directory, not a file [hint] Did you mean '" + incPath + "/np.hpp'? Use -I <path-to-Numpy-C-API>/include and #include \"np/np.hpp\" or #include <np/np.hpp>. Available: ";
         std::error_code ec2;
         int cnt = 0;
         for (auto &entry : std::filesystem::directory_iterator(incPath, ec2)) {
@@ -572,18 +614,21 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
 
   std::string toEval = sanitized;
   bool needsSemi = false;
-  if (!trimmed.empty() && trimmed.back() != ';' && trimmed.back() != '}' &&
-      trimmed.back() != '{' && trimmed[0] != '#') {
-    bool isDecl =
-        trimmed.find('=') != std::string::npos ||
-        trimmed.rfind("int ", 0) == 0 || trimmed.rfind("auto ", 0) == 0 ||
-        trimmed.rfind("float ", 0) == 0 || trimmed.rfind("double ", 0) == 0 ||
-        trimmed.rfind("char ", 0) == 0 || trimmed.rfind("std::", 0) == 0 ||
-        trimmed.rfind("const ", 0) == 0 || trimmed.rfind("string ", 0) == 0 ||
-        trimmed.rfind("long ", 0) == 0 || trimmed.rfind("unsigned ", 0) == 0;
-    if (isDecl) {
-      toEval = trimmed + ";\n";
-      needsSemi = true;
+  if (!trimmed.empty() && trimmed.back() != ';' && trimmed[0] != '#') {
+    // Don't auto-add ; for plain blocks that are not variable declarations
+    bool isBraceBlock = (trimmed.back() == '}' || trimmed.back() == '{') && trimmed.find('=') == std::string::npos;
+    if (!isBraceBlock) {
+      bool isDecl =
+          trimmed.find('=') != std::string::npos ||
+          trimmed.rfind("int ", 0) == 0 || trimmed.rfind("auto ", 0) == 0 ||
+          trimmed.rfind("float ", 0) == 0 || trimmed.rfind("double ", 0) == 0 ||
+          trimmed.rfind("char ", 0) == 0 || trimmed.rfind("std::", 0) == 0 ||
+          trimmed.rfind("const ", 0) == 0 || trimmed.rfind("string ", 0) == 0 ||
+          trimmed.rfind("long ", 0) == 0 || trimmed.rfind("unsigned ", 0) == 0;
+      if (isDecl) {
+        toEval = trimmed + ";\n";
+        needsSemi = true;
+      }
     }
   }
 
@@ -669,7 +714,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     }
     if (msg.find("file not found") != std::string::npos) {
       if (msg.find("/np'") != std::string::npos || msg.find("/np\"") != std::string::npos) {
-        msg += "\n[hint] Did you mean \"/.../include/np/np.hpp\"? Use -I /home/sergio/Project/Numpy-C-API/include and #include \"np/np.hpp\" or #include <np/np.hpp>";
+        msg += "\n[hint] Did you mean \"/.../include/np/np.hpp\"? Use -I <path-to-Numpy-C-API>/include and #include \"np/np.hpp\" or #include <np/np.hpp>";
       }
       if (sanitized.find("#include") != std::string::npos) {
         size_t q1 = sanitized.find('"');
@@ -713,7 +758,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     if (msg.find("ProxyBase") != std::string::npos || msg.find("convert_to") != std::string::npos ||
         msg.find("fixed_source") != std::string::npos || msg.find("vector<bool>") != std::string::npos) {
       msg += "\n[hint] Numpy-C-API ProxyBase/vector<bool> issue – header uses C++23 and boost::multiprecision. "
-             "Try: cpp-repl -std=c++23 -I /home/sergio/Project/Numpy-C-API/include "
+             "Try: cpp-repl -std=c++23 -I <path-to-Numpy-C-API>/include "
              "or use static_cast<np::bigint>(proxy).convert_to<double>() and "
              "static_cast<np::bigint>(a[n]) for ap*a[n]";
     }
@@ -822,20 +867,27 @@ bool Interpreter::eval(const std::string &code, std::string &err,
                        bool &incomplete) {
   incomplete = false;
   int braces = 0, parens = 0, brackets = 0;
-  for (char c : code) {
-    if (c == '{')
-      ++braces;
-    else if (c == '}')
-      --braces;
-    else if (c == '(')
-      ++parens;
-    else if (c == ')')
-      --parens;
-    else if (c == '[')
-      ++brackets;
-    else if (c == ']')
-      --brackets;
+  bool inSingle = false, inDouble = false, inLineComment = false, inBlockComment = false;
+  bool escaped = false;
+  for (size_t i = 0; i < code.size(); ++i) {
+    char c = code[i];
+    char n = (i + 1 < code.size()) ? code[i + 1] : '\0';
+    if (inLineComment) { if (c == '\n') inLineComment = false; continue; }
+    if (inBlockComment) { if (c == '*' && n == '/') { inBlockComment = false; ++i; } continue; }
+    if (inSingle) { if (escaped) escaped = false; else if (c == '\\') escaped = true; else if (c == '\'') inSingle = false; continue; }
+    if (inDouble) { if (escaped) escaped = false; else if (c == '\\') escaped = true; else if (c == '"') inDouble = false; continue; }
+    if (c == '/' && n == '/') { inLineComment = true; ++i; continue; }
+    if (c == '/' && n == '*') { inBlockComment = true; ++i; continue; }
+    if (c == '\'') { inSingle = true; continue; }
+    if (c == '"') { inDouble = true; continue; }
+    if (c == '{') ++braces;
+    else if (c == '}') --braces;
+    else if (c == '(') ++parens;
+    else if (c == ')') --parens;
+    else if (c == '[') ++brackets;
+    else if (c == ']') --brackets;
   }
+  if (inDouble || inSingle || inBlockComment) { incomplete = true; return true; }
   if (braces > 0 || parens > 0 || brackets > 0) {
     incomplete = true;
     return true;

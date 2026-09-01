@@ -120,6 +120,33 @@ target_include_directories(cpp-repl PRIVATE
   ${CLANG_INCLUDE_DIRS}
 )
 
+# Detect clang resource dir and project include dir (avoid hardcoded /home/sergio paths)
+find_program(CLANG_DETECT clang clang-22)
+if(CLANG_DETECT)
+  execute_process(COMMAND ${CLANG_DETECT} -print-resource-dir
+    OUTPUT_VARIABLE CLANG_RESOURCE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+endif()
+if(NOT CLANG_RESOURCE_DIR OR CLANG_RESOURCE_DIR STREQUAL "")
+  # Fallback probes for Arch vs Ubuntu layout
+  if(EXISTS "/usr/lib/clang/22")
+    set(CLANG_RESOURCE_DIR "/usr/lib/clang/22")
+  elseif(EXISTS "/usr/lib/llvm-22/lib/clang/22")
+    set(CLANG_RESOURCE_DIR "/usr/lib/llvm-22/lib/clang/22")
+  elseif(EXISTS "/usr/lib/llvm/lib/clang/22")
+    set(CLANG_RESOURCE_DIR "/usr/lib/llvm/lib/clang/22")
+  else()
+    set(CLANG_RESOURCE_DIR "/usr/lib/clang/22")
+  endif()
+endif()
+message(STATUS "Clang resource dir: ${CLANG_RESOURCE_DIR}")
+# Expose to compiler for interpreter.cpp (must be after add_executable)
+target_compile_definitions(cpp-repl PRIVATE
+  CLANG_RESOURCE_DIR="${CLANG_RESOURCE_DIR}"
+  CPP_REPL_INCLUDE_DIR="${PROJECT_SOURCE_DIR}/include"
+)
+
 # BigInt support: boost header-only + optional GMP
 find_package(Boost QUIET)
 if(Boost_FOUND)

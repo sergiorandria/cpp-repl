@@ -5,9 +5,11 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace repl {
 
@@ -24,8 +26,18 @@ bool Repl::init(std::string &err) {
   clang::IncrementalCompilerBuilder builder;
   // Bare C++17 with include paths from system. Use default driver args.
   // Explicit resource dir needed so builtin headers (stddef.h) are found.
-  std::vector<const char *> args = {"-std=c++17", "-O0", "-resource-dir",
-                                    "/usr/lib/clang/22"};
+#ifndef CLANG_RESOURCE_DIR
+#define CLANG_RESOURCE_DIR "/usr/lib/clang/22"
+#endif
+  std::string resDir = CLANG_RESOURCE_DIR;
+  {
+    std::error_code ec;
+    if (!std::filesystem::exists(resDir, ec)) {
+      const std::vector<std::string> alt = {"/usr/lib/llvm-22/lib/clang/22", "/usr/lib/clang/22", "/usr/lib/llvm/lib/clang/22"};
+      for (auto &c : alt) if (std::filesystem::exists(c, ec)) { resDir = c; break; }
+    }
+  }
+  std::vector<const char *> args = {"-std=c++17", "-O0", "-resource-dir", resDir.c_str()};
   builder.SetCompilerArgs(args);
 
   auto CI = builder.CreateCpp();
