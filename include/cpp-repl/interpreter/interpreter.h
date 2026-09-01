@@ -1,6 +1,7 @@
 #pragma once
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "cpp-repl/utils/version_detector.h"
 
@@ -63,6 +64,14 @@ public:
 private:
   bool ensureVersion(utils::StdVersion needed, std::string &err);
   bool reinitWithCurrentOptions(std::string &err);
+  std::string sanitizeIncludes(const std::string &code);
+  bool checkVariableRedefinition(const std::string &code, std::string &err);
+  void trackVariable(const std::string &code);
+  bool parseDeclaration(const std::string &code, std::string &type,
+                        std::string &name, std::string &value);
+  bool parseAssignment(const std::string &code, std::string &name,
+                       std::string &value);
+  std::string normalizeValue(const std::string &v);
   std::unique_ptr<clang::Interpreter> interp_;
   bool initialized_ = false;
   std::vector<std::string> history_;
@@ -73,6 +82,8 @@ private:
   std::vector<std::string> libraries_;
   // Storage for compiler args c_str() lifetime
   std::vector<std::string> compilerArgsStorage_;
+  std::unordered_map<std::string, std::pair<std::string, std::string>> variables_;
+  std::vector<std::unordered_map<std::string, std::pair<std::string, std::string>>> varHistory_;
 };
 
 } // namespace interpreter

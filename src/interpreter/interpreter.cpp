@@ -9,6 +9,9 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <regex>
+#include <filesystem>
+#include <algorithm>
 
 namespace cpprepl {
 namespace interpreter {
@@ -157,6 +160,8 @@ bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   interp_.reset();
   initialized_ = false;
   history_.clear();
+  variables_.clear();
+  varHistory_.clear();
   if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
@@ -231,6 +236,8 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
   interp_.reset();
   initialized_ = false;
   history_.clear();
+  variables_.clear();
+  varHistory_.clear();
   if (!init(needed, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
@@ -274,9 +281,166 @@ static inline std::string rtrim_semi(const std::string &s) {
   return t;
 }
 
+std::string Interpreter::normalizeValue(const std::string &v) {
+  std::string t = trim_copy(v);
+  if (!t.empty() && t.back() == ';') {
+    t.pop_back();
+    t = trim_copy(t);
+  }
+  std::string out;
+  bool inSpace = false;
+  for (char c : t) {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      if (!inSpace) out.push_back(' ');
+      inSpace = true;
+    } else {
+      out.push_back(c);
+      inSpace = false;
+    }
+  }
+  return trim_copy(out);
+}
+
+bool Interpreter::parseDeclaration(const std::string &code, std::string &type,
+                                   std::string &name, std::string &value) {
+  std::string t = trim_copy(code);
+  static std::regex declRegex(
+      R"(^\s*((?:(?:const|constexpr|static|volatile|inline|extern|mutable)\s+)*)([\w:\<\>\,\s\*\&]+?)\s+(\w+)\s*=\s*(.+?)\s*;?\s*$)",
+      std::regex::ECMAScript);
+  std::smatch m;
+  if (!std::regex_match(t, m, declRegex)) return false;
+  std::string qualifiers = trim_copy(m[1].str());
+  std::string rawType = trim_copy(m[2].str());
+  std::string rawName = trim_copy(m[3].str());
+  std::string rawVal = trim_copy(m[4].str());
+  if (rawType.empty()) return false;
+  if (rawName == "if" || rawName == "for" || rawName == "while" || rawName == "return")
+    return false;
+  std::string fullType = trim_copy(qualifiers + (qualifiers.empty() ? "" : " ") + rawType);
+  fullType = normalizeValue(fullType);
+  std::string lower = fullType;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  bool hasTypeKeyword = lower.find("int") != std::string::npos ||
+                        lower.find("double") != std::string::npos ||
+                        lower.find("float") != std::string::npos ||
+                        lower.find("char") != std::string::npos ||
+                        lower.find("long") != std::string::npos ||
+                        lower.find("short") != std::string::npos ||
+                        lower.find("unsigned") != std::string::npos ||
+                        lower.find("auto") != std::string::npos ||
+                        lower.find("string") != std::string::npos ||
+                        lower.find("bool") != std::string::npos ||
+                        lower.find("cpp_int") != std::string::npos ||
+                        lower.find("bigint") != std::string::npos ||
+                        lower.find("vector") != std::string::npos ||
+                        lower.find("map") != std::string::npos ||
+                        lower.find("std::") != std::string::npos ||
+                        fullType.find("::") != std::string::npos ||
+                        fullType.find("<") != std::string::npos ||
+                        fullType.find("*") != std::string::npos ||
+                        fullType.find("&") != std::string::npos;
+  if (!hasTypeKeyword) return false;
+  type = fullType;
+  name = rawName;
+  value = normalizeValue(rawVal);
+  return true;
+}
+
+bool Interpreter::parseAssignment(const std::string &code, std::string &name,
+                                  std::string &value) {
+  std::string t = trim_copy(code);
+  static std::regex assignRegex(R"(^\s*(\w+)\s*=\s*(.+?)\s*;?\s*$)");
+  std::smatch m;
+  if (!std::regex_match(t, m, assignRegex)) return false;
+  name = trim_copy(m[1].str());
+  value = normalizeValue(trim_copy(m[2].str()));
+  return true;
+}
+
+std::string Interpreter::sanitizeIncludes(const std::string &code) {
+  std::istringstream iss(code);
+  std::string line;
+  std::string result;
+  bool changed = false;
+  while (std::getline(iss, line)) {
+    std::string trimmed = trim_copy(line);
+    std::string resultLine = line;
+    if (trimmed.rfind("#include", 0) == 0) {
+      std::string t = trim_copy(line);
+      if (!t.empty() && t.back() == ';') {
+        size_t pos = line.find_last_of(';');
+        if (pos != std::string::npos) {
+          resultLine = line.substr(0, pos);
+          changed = true;
+        }
+      }
+      size_t q1 = resultLine.find('"');
+      if (q1 != std::string::npos) {
+        size_t q2 = resultLine.find('"', q1 + 1);
+        if (q2 != std::string::npos) {
+          std::string incPath = resultLine.substr(q1 + 1, q2 - q1 - 1);
+          std::error_code ec;
+          bool exists = std::filesystem::exists(incPath, ec);
+          bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
+          if (!ec && exists && isDir) {}
+        }
+      }
+    }
+    result += resultLine + "\n";
+  }
+  if (!changed) return code;
+  return result;
+}
+
+bool Interpreter::checkVariableRedefinition(const std::string &code, std::string &err) {
+  std::string trimmed = trim_copy(code);
+  if (trimmed.find('\n') != std::string::npos) return true;
+  if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ':') return true;
+  if (trimmed.rfind("int ", 0) == 0 && trimmed.find('(') != std::string::npos && trimmed.find(')') != std::string::npos && trimmed.find('{') != std::string::npos) return true;
+  if (trimmed.find("for") == 0 || trimmed.find("while") == 0 || trimmed.find("if") == 0 || trimmed.find("struct ") != std::string::npos || trimmed.find("class ") != std::string::npos)
+    return true;
+  std::string type, name, value;
+  if (parseDeclaration(trimmed, type, name, value)) {
+    auto it = variables_.find(name);
+    if (it != variables_.end()) {
+      std::string prevType = it->second.first;
+      std::string prevVal = it->second.second;
+      if (prevType == type && prevVal == value) {
+        std::cout << "[ignored: redefinition of '" << name << "' with same value " << value << " (type " << type << ")]\n";
+        return false;
+      } else {
+        err = "redefinition of '" + name + "' with different value (previous: " + prevVal + " [" + prevType + "] vs new: " + value + " [" + type + "])";
+        err += " [hint: same name & same value is allowed and ignored]";
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+void Interpreter::trackVariable(const std::string &code) {
+  std::string trimmed = trim_copy(code);
+  if (trimmed.find('\n') != std::string::npos) return;
+  if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ':') return;
+  std::string type, name, value;
+  if (parseDeclaration(trimmed, type, name, value)) {
+    varHistory_.push_back(variables_);
+    variables_[name] = {type, value};
+    return;
+  }
+  std::string aName, aVal;
+  if (parseAssignment(trimmed, aName, aVal)) {
+    auto it = variables_.find(aName);
+    if (it != variables_.end()) {
+      varHistory_.push_back(variables_);
+      it->second.second = aVal;
+    }
+  }
+}
+
 bool Interpreter::eval(const std::string &code, std::string &err) {
-  // auto-detect version first
-  auto needed = utils::VersionDetector::detect(code);
+  std::string sanitized = sanitizeIncludes(code);
+  auto needed = utils::VersionDetector::detect(sanitized);
   if (static_cast<int>(needed) > static_cast<int>(currentVersion_)) {
     std::string vErr;
     if (!ensureVersion(needed, vErr)) {
@@ -289,11 +453,52 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     err = "REPL not initialized";
     return false;
   }
-  std::string trimmed = trim_copy(code);
+  std::string trimmed = trim_copy(sanitized);
   if (trimmed.empty())
     return true;
 
-  std::string toEval = code;
+  if (trimmed.rfind("#include", 0) == 0) {
+    size_t q1 = sanitized.find('"');
+    size_t q2 = std::string::npos;
+    if (q1 != std::string::npos) q2 = sanitized.find('"', q1 + 1);
+    std::string incPath;
+    if (q1 != std::string::npos && q2 != std::string::npos) incPath = sanitized.substr(q1 + 1, q2 - q1 - 1);
+    else {
+      size_t a1 = sanitized.find('<');
+      size_t a2 = sanitized.find('>', a1 + 1);
+      if (a1 != std::string::npos && a2 != std::string::npos) incPath = sanitized.substr(a1 + 1, a2 - a1 - 1);
+    }
+    if (!incPath.empty()) {
+      std::error_code ec;
+      bool exists = std::filesystem::exists(incPath, ec);
+      bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
+      if (!ec && exists && isDir) {
+        err = "fatal error: '" + incPath + "' is a directory, not a file [hint] Did you mean '" + incPath + "/np.hpp'? Use -I /home/sergio/Project/Numpy-C-API/include and #include \"np/np.hpp\" or #include <np/np.hpp>. Available: ";
+        std::error_code ec2;
+        int cnt = 0;
+        for (auto &entry : std::filesystem::directory_iterator(incPath, ec2)) {
+          if (ec2) break;
+          if (cnt++ >= 6) { err += "..."; break; }
+          err += entry.path().filename().string() + " ";
+        }
+        return false;
+      }
+    }
+  }
+
+  {
+    std::string redefErr;
+    if (!checkVariableRedefinition(sanitized, redefErr)) {
+      if (!redefErr.empty()) {
+        err = redefErr;
+        return false;
+      } else {
+        return true;
+      }
+    }
+  }
+
+  std::string toEval = sanitized;
   bool needsSemi = false;
   if (!trimmed.empty() && trimmed.back() != ';' && trimmed.back() != '}' &&
       trimmed.back() != '{' && trimmed[0] != '#') {
@@ -318,19 +523,21 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
         std::move(e), [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
     if (needsSemi) {
       clang::Value V2;
-      auto e2 = interp_->ParseAndExecute(code, &V2);
+      auto e2 = interp_->ParseAndExecute(sanitized, &V2);
       if (!e2) {
         if (V2.isValid()) {
           V2.dump();
           std::cout << "\n";
         }
-        if (!code.empty())
-          history_.push_back(code);
+        if (!sanitized.empty()) {
+          history_.push_back(sanitized);
+          trackVariable(sanitized);
+        }
         return true;
       }
       llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
     }
-    if (!needsSemi && !trimmed.empty() && trimmed.back() != ';' &&
+    if (trimmed[0] != '#' && !needsSemi && !trimmed.empty() && trimmed.back() != ';' &&
         trimmed.back() != '}' && trimmed.back() != '{') {
       std::string withSemi = trimmed + ";\n";
       clang::Value V2;
@@ -340,11 +547,95 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           V2.dump();
           std::cout << "\n";
         }
-        if (!code.empty())
-          history_.push_back(code);
+        if (!sanitized.empty()) {
+          history_.push_back(sanitized);
+          trackVariable(sanitized);
+        }
         return true;
       }
       llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
+    }
+    // Auto-upgrade C++ standard if error indicates need for C++20/23 (e.g. header requires it)
+    {
+      utils::StdVersion higher = utils::StdVersion::Cpp17;
+      if (msg.find("source_location") != std::string::npos ||
+          msg.find("std::format") != std::string::npos ||
+          msg.find("concept") != std::string::npos ||
+          msg.find("requires") != std::string::npos ||
+          msg.find("co_await") != std::string::npos ||
+          msg.find("char8_t") != std::string::npos ||
+          msg.find("consteval") != std::string::npos ||
+          msg.find("only available with '-std=c++20'") != std::string::npos ||
+          msg.find("is only available from C++20") != std::string::npos) {
+        higher = utils::StdVersion::Cpp20;
+      }
+      if (msg.find("import") != std::string::npos && msg.find("module") != std::string::npos) {
+        higher = utils::StdVersion::Cpp23;
+      }
+      if (static_cast<int>(higher) > static_cast<int>(currentVersion_)) {
+        std::string vErr;
+        if (ensureVersion(higher, vErr)) {
+          clang::Value V2;
+          auto e2 = interp_->ParseAndExecute(toEval, &V2);
+          if (!e2) {
+            if (V2.isValid()) {
+              bool shouldPrint2 = true;
+              if (V2.isVoid()) shouldPrint2 = false;
+              else if (trimmed.find("std::cout") != std::string::npos) shouldPrint2 = false;
+              if (shouldPrint2) { V2.dump(); std::cout << "\n"; }
+            }
+            if (!sanitized.empty()) {
+              history_.push_back(sanitized);
+              trackVariable(sanitized);
+            }
+            std::cout << "[auto-upgraded to " << utils::VersionDetector::toString(higher) << " for header compatibility]\n";
+            return true;
+          }
+          llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+        }
+      }
+    }
+    if (msg.find("file not found") != std::string::npos) {
+      if (msg.find("/np'") != std::string::npos || msg.find("/np\"") != std::string::npos) {
+        msg += "\n[hint] Did you mean \"/.../include/np/np.hpp\"? Use -I /home/sergio/Project/Numpy-C-API/include and #include \"np/np.hpp\" or #include <np/np.hpp>";
+      }
+      if (sanitized.find("#include") != std::string::npos) {
+        size_t q1 = sanitized.find('"');
+        size_t q2 = sanitized.find('"', q1 + 1);
+        if (q1 != std::string::npos && q2 != std::string::npos) {
+          std::string incPath = sanitized.substr(q1 + 1, q2 - q1 - 1);
+          std::error_code ec;
+          bool exists = std::filesystem::exists(incPath, ec);
+          bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
+          if (!ec && exists && isDir) {
+            msg += "\n[hint] '" + incPath + "' is a directory, not a file. Try including a specific header like '" + incPath + "/np.hpp' or use -I with <np/...>";
+            msg += "\n[hint] Available headers in " + incPath + ": ";
+            int cnt = 0;
+            std::error_code ec2;
+            for (auto &entry : std::filesystem::directory_iterator(incPath, ec2)) {
+              if (ec2) break;
+              if (cnt++ >= 5) { msg += "..."; break; }
+              msg += entry.path().filename().string() + " ";
+            }
+          }
+        }
+      }
+    }
+    if (msg.find("redefinition") != std::string::npos) {
+      std::string type, name, value;
+      if (parseDeclaration(sanitized, type, name, value)) {
+        auto it = variables_.find(name);
+        if (it != variables_.end()) {
+          if (it->second.first == type && it->second.second == value) {
+            std::cout << "[ignored: redefinition of '" << name << "' with same value " << value << "]\n";
+            return true;
+          } else {
+            err = "redefinition of '" + name + "' with different value (previous: " + it->second.second + " [" + it->second.first + "] vs new: " + value + " [" + type + "])";
+            err += " [hint: same name & same value is allowed and ignored]";
+            return false;
+          }
+        }
+      }
     }
     err = msg;
     return false;
@@ -387,11 +678,20 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       std::cout << "\n";
     }
   } else {
-    std::string t = trim_copy(code);
+    std::string t = trim_copy(sanitized);
     if (!t.empty() && t.back() == ';') {
       bool likelyExpr = true;
       if (t.find("int ") != std::string::npos ||
           t.find("auto ") != std::string::npos ||
+          t.find("double ") != std::string::npos ||
+          t.find("float ") != std::string::npos ||
+          t.find("char ") != std::string::npos ||
+          t.find("long ") != std::string::npos ||
+          t.find("unsigned ") != std::string::npos ||
+          t.find("const ") != std::string::npos ||
+          t.find("std::") != std::string::npos ||
+          t.find("bool ") != std::string::npos ||
+          t.find("=") != std::string::npos ||
           t.find("#include") != std::string::npos || t.find("for") == 0 ||
           t.find("while") == 0 || t.find("if") == 0 ||
           t.find("struct ") != std::string::npos ||
@@ -400,7 +700,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           t.find("std::cout") != std::string::npos ||
           t.find("printf") != std::string::npos)
         likelyExpr = false;
-      std::string stripped = rtrim_semi(code);
+      std::string stripped = rtrim_semi(sanitized);
       if (likelyExpr && stripped.find(';') == std::string::npos &&
           stripped.size() < 200) {
         clang::Value V2;
@@ -431,8 +731,10 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       }
     }
   }
-  if (!code.empty())
-    history_.push_back(code);
+  if (!sanitized.empty()) {
+    history_.push_back(sanitized);
+    trackVariable(sanitized);
+  }
   return true;
 }
 
@@ -495,6 +797,20 @@ bool Interpreter::undo(unsigned n, std::string &err) {
   }
   while (n-- > 0 && !history_.empty())
     history_.pop_back();
+  variables_.clear();
+  for (auto &h : history_) {
+    std::string type, name, value;
+    if (parseDeclaration(h, type, name, value)) {
+      variables_[name] = {type, value};
+    } else {
+      std::string aName, aVal;
+      if (parseAssignment(h, aName, aVal)) {
+        auto it = variables_.find(aName);
+        if (it != variables_.end()) it->second.second = aVal;
+      }
+    }
+  }
+  varHistory_.clear();
   return true;
 }
 void Interpreter::dump() const {
@@ -514,6 +830,8 @@ void Interpreter::reset(std::string &err) {
   interp_.reset();
   initialized_ = false;
   history_.clear();
+  variables_.clear();
+  varHistory_.clear();
   if (!init(currentVersion_, local))
     err = local;
   else
