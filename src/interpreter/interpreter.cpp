@@ -193,6 +193,7 @@ bool Interpreter::init(utils::StdVersion version,
   libraryPaths_ = libraryPaths;
   libraries_ = libraries;
   currentVersion_ = version;
+  stdLibIncluded_ = false;
 
   clang::IncrementalCompilerBuilder builder;
   compilerArgsStorage_.clear();
@@ -298,6 +299,9 @@ bool Interpreter::init(utils::StdVersion version,
       llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
 #endif
   }
+  // Auto-include standard library (bits/stdc++.h) by default for STL support
+  // If keyword not found, eval will retry with this. Pre-include avoids extra round-trip.
+  tryIncludeStdLib();
   // Load libraries requested via -l / --library (absolute, relative, or -l name)
   for (auto &lib : libraries_) {
     auto tryLoad = [&](const std::string &path) -> bool {
@@ -357,6 +361,7 @@ bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   history_.clear();
   variables_.clear();
   varHistory_.clear();
+  stdLibIncluded_ = false;
   if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
@@ -433,6 +438,7 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
   history_.clear();
   variables_.clear();
   varHistory_.clear();
+  stdLibIncluded_ = false;
   if (!init(needed, includePaths_, defines_, libraryPaths_, libraries_, local)) {
     err = local;
     return false;
@@ -444,6 +450,46 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
     }
   }
   return true;
+}
+
+bool Interpreter::tryIncludeStdLib() {
+  if (stdLibIncluded_ || !initialized_ || !interp_) return stdLibIncluded_;
+  clang::Value V;
+  // Try bits/stdc++.h first (covers everything)
+  auto e = interp_->ParseAndExecute("#include <bits/stdc++.h>\n", &V);
+  if (!e) { stdLibIncluded_ = true; return true; }
+  llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){});
+  // Fallback: include common STL headers individually
+  const char *fallback = R"(
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cmath>
+#include <map>
+#include <set>
+#include <utility>
+#include <functional>
+#include <numeric>
+#include <iterator>
+#include <memory>
+#include <type_traits>
+#include <limits>
+#include <cstdint>
+#include <cstddef>
+)";
+  auto e2 = interp_->ParseAndExecute(fallback, &V);
+  if (!e2) { stdLibIncluded_ = true; return true; }
+  llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+  return false;
+}
+
+bool Interpreter::ensureStdLib(std::string &err) {
+  if (stdLibIncluded_) return true;
+  if (!initialized_) { err = "REPL not initialized"; return false; }
+  if (tryIncludeStdLib()) { err.clear(); return true; }
+  err = "failed to include standard library (bits/stdc++.h)";
+  return false;
 }
 
 bool Interpreter::evalAuto(const std::string &code, std::string &err) {
@@ -719,6 +765,12 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
   if (trimmed.empty())
     return true;
 
+  // Proactive stdlib: include <bits/stdc++.h> on first use of std::
+  if (!stdLibIncluded_ && sanitized.find("std::") != std::string::npos) {
+    std::string dummy;
+    ensureStdLib(dummy);
+  }
+
   if (trimmed.rfind("#include", 0) == 0) {
     size_t q1 = sanitized.find('"');
     size_t q2 = std::string::npos;
@@ -909,6 +961,54 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
              "Try: cpp-repl -std=c++23 -I <path-to-Numpy-C-API>/include "
              "or use static_cast<np::bigint>(proxy).convert_to<double>() and "
              "static_cast<np::bigint>(a[n]) for ap*a[n]";
+    }
+    // Auto-include standard library if keyword suggests missing header
+    // e.g., std::exp, std::forward, std::vector without prior include
+    if (!stdLibIncluded_ && sanitized.find("std::") != std::string::npos &&
+        (msg.find("undeclared identifier") != std::string::npos ||
+         msg.find("no member named") != std::string::npos ||
+         msg.find("has no member") != std::string::npos ||
+         msg.find("unknown type name") != std::string::npos ||
+         msg.find("use of undeclared") != std::string::npos ||
+         msg.find("implicit instantiation") != std::string::npos)) {
+      std::string dummy;
+      if (ensureStdLib(dummy)) {
+        clang::Value V2;
+        auto e2 = interp_->ParseAndExecute(toEval, &V2);
+        if (!e2) {
+          if (V2.isValid()) {
+            bool shouldPrint = true;
+            if (V2.isVoid()) shouldPrint = false;
+            else if (trimmed.find("std::cout") != std::string::npos) shouldPrint = false;
+            if (shouldPrint) { highPrecisionDump(V2); std::cout << "\n"; }
+          }
+          if (!sanitized.empty()) {
+            history_.push_back(sanitized);
+            trackVariable(sanitized);
+          }
+          std::cout << "[auto-included <bits/stdc++.h> for std:: support]\n";
+          return true;
+        }
+        llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){ msg = EIB.message(); });
+        msg += "\n[hint] tried auto-including <bits/stdc++.h> but still failed; try explicit #include <...> or check std:: usage";
+      }
+    }
+    // JIT poison recovery: Symbols not found / Failed to materialize symbols
+    if (msg.find("Symbols not found") != std::string::npos ||
+        msg.find("Failed to materialize symbols") != std::string::npos ||
+        msg.find("__orc_init_func") != std::string::npos) {
+      // Attempt to undo the poisoned increment; clang::Interpreter::Undo(1) often clears it
+      if (auto ue = interp_->Undo(1)) {
+        llvm::handleAllErrors(std::move(ue), [&](llvm::ErrorInfoBase &EIB){});
+      }
+      // Also pop last history if it was the poisoned one (if any)
+      // No push yet for this failed eval, so nothing to pop from history, but prior poisoned def may be in history
+      // Offer hint and suggest :reset if still broken
+      if (msg.find("Failed to materialize") != std::string::npos) {
+        msg += "\n[hint] JIT poisoned — auto-undo attempted. If subsequent #include still fails, run :reset or restart. Original error was likely a bad template (e.g., std::forward without <T>).";
+      } else {
+        msg += "\n[hint] Symbols not found — likely a failed template instantiation (e.g., std::forward(x) should be std::forward<T>(x)). Auto-undo attempted; try :undo or :reset.";
+      }
     }
     err = msg;
     return false;
@@ -1112,6 +1212,7 @@ void Interpreter::reset(std::string &err) {
   history_.clear();
   variables_.clear();
   varHistory_.clear();
+  stdLibIncluded_ = false;
   if (!init(currentVersion_, local))
     err = local;
   else

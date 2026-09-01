@@ -157,6 +157,10 @@ private:
                        std::string &value);
   /** @brief Normalize a value string for comparison. */
   std::string normalizeValue(const std::string &v);
+  /** @brief Ensure standard library is available (bits/stdc++.h). */
+  bool ensureStdLib(std::string &err);
+  /** @brief Try to include bits/stdc++.h or fallback headers. */
+  bool tryIncludeStdLib();
   std::unique_ptr<clang::Interpreter> interp_;
   bool initialized_ = false;
   std::vector<std::string> history_;
@@ -168,6 +172,7 @@ private:
   std::vector<std::string> compilerArgsStorage_;
   std::unordered_map<std::string, std::pair<std::string, std::string>> variables_;
   std::vector<std::unordered_map<std::string, std::pair<std::string, std::string>>> varHistory_;
+  bool stdLibIncluded_ = false;
 };
 
 } // namespace interpreter
