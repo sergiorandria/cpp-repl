@@ -1,3 +1,7 @@
+/**
+ * @file interpreter.cpp
+ * @brief Interpreter implementation with high-precision float printing and BigInt handling.
+ */
 #include "cpp-repl/interpreter/interpreter.h"
 #include "cpp-repl/utils/bigint.h"
 #include "cpp-repl/utils/version_detector.h"
@@ -6,12 +10,129 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "clang/AST/Type.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <regex>
 #include <filesystem>
 #include <algorithm>
+#include <limits>
+#include <cmath>
+
+namespace {
+/**
+ * @brief Helper for high-precision floating point printing.
+ *
+ * Replaces clang's default %.6g/%.8g which truncates to 6-8 digits.
+ * Uses max_digits10 (9 for float, 17 for double, 21 for long double)
+ * so printed values round-trip and preserve input precision.
+ */
+static std::string formatFloatHighPrec(float v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) {
+    ss << llvm::format("%g", v);
+  } else if (v == static_cast<float>(static_cast<int64_t>(v))) {
+    ss << llvm::format("%.1f", v);
+  } else {
+    ss << llvm::format("%#.9g", v);
+  }
+  ss << 'f';
+  return ss.str();
+}
+static std::string formatDoubleHighPrec(double v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) {
+    ss << llvm::format("%g", v);
+  } else if (v == static_cast<double>(static_cast<int64_t>(v))) {
+    ss << llvm::format("%.1f", v);
+  } else {
+    ss << llvm::format("%#.17g", v);
+  }
+  return ss.str();
+}
+static std::string formatLongDoubleHighPrec(long double v) {
+  std::string out;
+  llvm::raw_string_ostream ss(out);
+  if (std::isnan(v) || std::isinf(v)) {
+    ss << llvm::format("%Lg", v);
+  } else if (v == static_cast<long double>(static_cast<int64_t>(v))) {
+    ss << llvm::format("%.1Lf", v);
+  } else {
+    constexpr int prec = std::numeric_limits<long double>::max_digits10;
+    std::string fmt = "%#." + std::to_string(prec) + "Lg";
+    ss << llvm::format(fmt.c_str(), v);
+  }
+  ss << 'L';
+  return ss.str();
+}
+
+static void highPrecisionDump(const clang::Value &V) {
+  if (!V.isValid() || V.isVoid())
+    return;
+  std::string typeStr;
+  {
+    llvm::raw_string_ostream ts(typeStr);
+    V.printType(ts);
+  }
+  std::string dataStr;
+  bool handled = false;
+  // Try direct Kind first – covers most prvalues
+  switch (V.getKind()) {
+  case clang::Value::K_Float:
+    dataStr = formatFloatHighPrec(V.getFloat());
+    handled = true;
+    break;
+  case clang::Value::K_Double:
+    dataStr = formatDoubleHighPrec(V.getDouble());
+    handled = true;
+    break;
+  case clang::Value::K_LongDouble:
+    dataStr = formatLongDoubleHighPrec(V.getLongDouble());
+    handled = true;
+    break;
+  default:
+    break;
+  }
+  if (!handled) {
+    // Fallback: check QualType for reference / object cases where Kind is
+    // K_PtrOrObj but the underlying type is a builtin floating type.
+    clang::QualType qt = V.getType();
+    clang::QualType nonRef = qt.getNonReferenceType();
+    const clang::Type *canon = nonRef.getCanonicalType().getTypePtr();
+    if (auto *bt = llvm::dyn_cast<clang::BuiltinType>(canon)) {
+      if (bt->getKind() == clang::BuiltinType::Float ||
+          bt->getKind() == clang::BuiltinType::Double ||
+          bt->getKind() == clang::BuiltinType::LongDouble) {
+        // Value is stored as a pointer (reference / object)
+        if (V.getKind() == clang::Value::K_PtrOrObj && V.getPtr()) {
+          void *p = V.getPtr();
+          if (bt->getKind() == clang::BuiltinType::Float) {
+            float fv = *static_cast<float *>(p);
+            dataStr = formatFloatHighPrec(fv);
+            handled = true;
+          } else if (bt->getKind() == clang::BuiltinType::Double) {
+            double dv = *static_cast<double *>(p);
+            dataStr = formatDoubleHighPrec(dv);
+            handled = true;
+          } else {
+            long double ldv = *static_cast<long double *>(p);
+            dataStr = formatLongDoubleHighPrec(ldv);
+            handled = true;
+          }
+        }
+      }
+    }
+  }
+  if (!handled) {
+    llvm::raw_string_ostream ds(dataStr);
+    V.printData(ds);
+  }
+  llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
+}
+} // namespace
 
 namespace cpprepl {
 namespace interpreter {
@@ -643,7 +764,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       auto e2 = interp_->ParseAndExecute(sanitized, &V2);
       if (!e2) {
         if (V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
         }
         if (!sanitized.empty()) {
@@ -661,7 +782,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       auto e2 = interp_->ParseAndExecute(withSemi, &V2);
       if (!e2) {
         if (V2.isValid()) {
-          V2.dump();
+          highPrecisionDump(V2);
           std::cout << "\n";
         }
         if (!sanitized.empty()) {
@@ -699,7 +820,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
               bool shouldPrint2 = true;
               if (V2.isVoid()) shouldPrint2 = false;
               else if (trimmed.find("std::cout") != std::string::npos) shouldPrint2 = false;
-              if (shouldPrint2) { V2.dump(); std::cout << "\n"; }
+              if (shouldPrint2) { highPrecisionDump(V2); std::cout << "\n"; }
             }
             if (!sanitized.empty()) {
               history_.push_back(sanitized);
@@ -799,7 +920,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
       }
     }
     if (shouldPrint) {
-      V.dump();
+      highPrecisionDump(V);
       std::cout << "\n";
     }
   } else {
@@ -847,7 +968,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
               llvm::handleAllErrors(std::move(e3),
                                     [&](llvm::ErrorInfoBase &EIB) {});
           } else {
-            V2.dump();
+            highPrecisionDump(V2);
             std::cout << "\n";
           }
         } else if (e2)
