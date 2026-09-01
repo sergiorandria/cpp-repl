@@ -2,7 +2,12 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 #ifdef HAS_READLINE
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -89,17 +94,79 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     return true;
   }
   if (t == ":clear" || t == ":cls" || t == ":c" || t == "clear" || t == "cls") {
-    // Clear output buffer / terminal screen
-    // ANSI clear screen + move cursor home
-    std::cout << "\033[2J\033[H" << std::flush;
+    // Robust cross-platform terminal clear: works on every terminal type
+    // 1. isatty check – when piped/redirected there is no screen to clear
+    // 2. HAS_READLINE – use terminfo-aware rl_clear_screen when available
+    // 3. Windows: Win32 Console API (no external process), fallback to cls
+    // 4. POSIX: TERM=dumb -> newlines; TERM set -> `clear` (terminfo),
+    //    fallback to ANSI with scrollback clear, fallback to newlines
 #ifdef HAS_READLINE
-    if (isatty(STDOUT_FILENO)) {
-      // readline helper to clear screen and redisplay
+#ifdef _WIN32
+    if (_isatty(_fileno(stdin)) || _isatty(_fileno(stdout))) {
+#else
+    if (isatty(STDOUT_FILENO) || isatty(STDIN_FILENO)) {
+#endif
+      // readline's clear is terminfo-aware (honors TERM, works in tmux/screen/xterm)
       rl_clear_screen(0, 0);
       rl_on_new_line();
+      // Also emit ANSI / system clear so non-readline output and scrollback are cleared
     }
 #endif
-    // Also clear any partially accumulated multiline buffer
+#ifdef _WIN32
+    // Windows: try native Console API first – works even without `cls` in PATH
+    // and on all Windows consoles (cmd.exe, PowerShell, Windows Terminal)
+    {
+      HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+      if (hOut != INVALID_HANDLE_VALUE && hOut != nullptr) {
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
+          COORD topLeft = {0, 0};
+          DWORD written = 0;
+          DWORD cells = static_cast<DWORD>(csbi.dwSize.X) * static_cast<DWORD>(csbi.dwSize.Y);
+          FillConsoleOutputCharacterA(hOut, ' ', cells, topLeft, &written);
+          FillConsoleOutputAttribute(hOut, csbi.wAttributes, cells, topLeft, &written);
+          SetConsoleCursorPosition(hOut, topLeft);
+        } else {
+          // API failed (e.g., redirected handle) – fallback
+          if (std::system("cls") != 0) {
+            std::cout << "\033[2J\033[3J\033[H" << std::flush;
+          }
+        }
+      } else {
+        if (std::system("cls") != 0) {
+          std::cout << "\033[2J\033[3J\033[H" << std::flush;
+        }
+      }
+    }
+#else
+    // POSIX: check if we are actually attached to a terminal
+    {
+      bool isTTY = isatty(STDOUT_FILENO) || isatty(STDERR_FILENO) || isatty(STDIN_FILENO);
+      if (!isTTY) {
+        // Piped / redirected / non-interactive – simulate clear with newlines
+        std::cout << std::string(100, '\n') << std::flush;
+      } else {
+        const char *term = std::getenv("TERM");
+        std::string termStr = term ? term : "";
+        if (termStr.empty() || termStr == "dumb") {
+          // Dumb terminal (e.g., emacs shell, dumb) – ANSI not supported
+          std::cout << std::string(100, '\n') << std::flush;
+        } else {
+          // Try terminfo-based `clear` – honors TERM (xterm-256color, screen, tmux, etc.)
+          // Returns 0 on success; non-zero if `clear` missing or TERM unknown
+          int rc = std::system("clear");
+          if (rc != 0) {
+            // Fallback 1: ANSI – works on virtually all modern terminals
+            // \033[2J clear screen, \033[3J clear scrollback, \033[H home cursor
+            std::cout << "\033[2J\033[3J\033[H" << std::flush;
+            // Fallback 2: if ANSI somehow not honored, ensure visual separation
+            // Heuristic: if TERM is very minimal, also push with newlines is redundant
+            // so we rely on ANSI alone here. The 100-newline fallback above covers dumb.
+          }
+        }
+      }
+    }
+#endif
     buffer_.clear();
     return true;
   }

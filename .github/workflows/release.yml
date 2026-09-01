@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -35,24 +37,32 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-22 -DCMAKE_CXX_COMPILER=clang++-22 -DLLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm
           cmake --build build -j $(nproc)
           ./build/cpp-repl --version
-          tar czf cpp-repl-${{ github.ref_name }}-linux-x86_64.tar.gz -C build cpp-repl
-          sha256sum cpp-repl-${{ github.ref_name }}-linux-x86_64.tar.gz | tee SHA256SUMS
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="auto-${{ github.sha }}"
+          fi
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          tar czf cpp-repl-${TAG}-linux-x86_64.tar.gz -C build cpp-repl
+          sha256sum cpp-repl-${TAG}-linux-x86_64.tar.gz | tee SHA256SUMS
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Automatic Release {0}', github.sha) }}
+          target_commitish: ${{ github.sha }}
           files: |
             cpp-repl-*.tar.gz
             SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: false
 
-      - name: Upload artifact (manual dispatch)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload artifact (manual dispatch fallback)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cpp-repl-release-${{ github.ref_name || inputs.tag || 'manual' }}
+          name: cpp-repl-release-${{ env.TAG || github.ref_name || inputs.tag || 'manual' }}
           path: |
             cpp-repl-*.tar.gz
             SHA256SUMS

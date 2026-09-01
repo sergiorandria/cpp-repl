@@ -105,4 +105,41 @@ jobs:
           path: build/cpp-repl
           retention-days: 7
 
+  release:
+    name: Automatic Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cpp-repl-ubuntu-24.04-llvm22
+          path: ./artifact
+
+      - name: Prepare release archive
+        run: |
+          ls -lh ./artifact/cpp-repl
+          chmod +x ./artifact/cpp-repl
+          tar czf cpp-repl-auto-${{ github.sha }}-linux-x86_64.tar.gz -C ./artifact cpp-repl
+          sha256sum cpp-repl-auto-${{ github.sha }}-linux-x86_64.tar.gz | tee SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create Automatic GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-${{ github.sha }}
+          name: Automatic Release ${{ github.sha }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            cpp-repl-*.tar.gz
+            SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+
   # Fast sanity job for PRs without full LLVM install (doc/lint only) could be added here
