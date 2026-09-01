@@ -221,33 +221,45 @@ bool Interpreter::init(utils::StdVersion version,
     compilerArgsStorage_.push_back(resDir);
   }
   // Fix for Numpy-C-API headers (NZERO, vector<bool>, ProxyBase) without modifying them
+  // Make -include conditional: only add if header actually exists, otherwise skip (prevents fatal error in CI artifact)
 #ifndef CPP_REPL_INCLUDE_DIR
 #define CPP_REPL_INCLUDE_DIR "/usr/include"
 #endif
   {
+    std::string actualInc;
     std::string projInc = CPP_REPL_INCLUDE_DIR;
     std::error_code ec;
-    if (std::filesystem::exists(projInc, ec)) {
-      compilerArgsStorage_.push_back("-I");
-      compilerArgsStorage_.push_back(projInc);
+    if (std::filesystem::exists(projInc + "/cpp-repl/fix_np_headers.hpp", ec)) {
+      actualInc = projInc;
+    } else if (std::filesystem::exists("include/cpp-repl/fix_np_headers.hpp", ec)) {
+      actualInc = "include";
+    } else if (std::filesystem::exists("/usr/include/cpp-repl/fix_np_headers.hpp", ec)) {
+      actualInc = "/usr/include";
+    } else if (std::filesystem::exists("/usr/local/include/cpp-repl/fix_np_headers.hpp", ec)) {
+      actualInc = "/usr/local/include";
     } else {
-      // Fallback: try relative to current binary or common install prefix
-      // Use project source dir probed at runtime if possible
-      if (std::filesystem::exists("include/cpp-repl/fix_np_headers.hpp", ec)) {
-        compilerArgsStorage_.push_back("-I");
-        compilerArgsStorage_.push_back("include");
-      } else if (std::filesystem::exists("/usr/include/cpp-repl/fix_np_headers.hpp", ec)) {
-        compilerArgsStorage_.push_back("-I");
-        compilerArgsStorage_.push_back("/usr/include");
-      } else {
-        // Last resort: still add configured path (clang will ignore if missing)
+      actualInc = "";
+    }
+    if (!actualInc.empty()) {
+      compilerArgsStorage_.push_back("-I");
+      compilerArgsStorage_.push_back(actualInc);
+      compilerArgsStorage_.push_back("-include");
+      compilerArgsStorage_.push_back("cpp-repl/fix_np_headers.hpp");
+    } else {
+      // No fix header found (e.g., running artefact outside source tree) – skip -include.
+      // Still ensure a generic include dir for user code if available.
+      if (std::filesystem::exists(projInc, ec)) {
         compilerArgsStorage_.push_back("-I");
         compilerArgsStorage_.push_back(projInc);
+      } else if (std::filesystem::exists("include", ec)) {
+        compilerArgsStorage_.push_back("-I");
+        compilerArgsStorage_.push_back("include");
+      } else if (std::filesystem::exists("/usr/include", ec)) {
+        compilerArgsStorage_.push_back("-I");
+        compilerArgsStorage_.push_back("/usr/include");
       }
     }
   }
-  compilerArgsStorage_.push_back("-include");
-  compilerArgsStorage_.push_back("cpp-repl/fix_np_headers.hpp");
   for (auto &p : includePaths_) {
     compilerArgsStorage_.push_back("-I");
     compilerArgsStorage_.push_back(p);
@@ -300,7 +312,6 @@ bool Interpreter::init(utils::StdVersion version,
 #endif
   }
   // Auto-include standard library (bits/stdc++.h) by default for STL support
-  // If keyword not found, eval will retry with this. Pre-include avoids extra round-trip.
   tryIncludeStdLib();
   // Load libraries requested via -l / --library (absolute, relative, or -l name)
   for (auto &lib : libraries_) {
@@ -612,18 +623,22 @@ bool Interpreter::parseDeclaration(const std::string &code, std::string &type,
                                    std::string &name, std::string &value) {
   std::string t = trim_copy(code);
   static std::regex declRegex(
-      R"(^\s*((?:(?:const|constexpr|static|volatile|inline|extern|mutable)\s+)*)([\w:\<\>\,\s\*\&]+?)\s+(\w+)\s*=\s*(.+?)\s*;?\s*$)",
+      R"(^\s*((?:(?:const|constexpr|static|volatile|inline|extern|mutable)\s+)*)([\w:\<\>\,\s]+?)\s*([\*\&]*)\s*(\w+)\s*(?:=\s*(.+?))?\s*;?\s*$)",
       std::regex::ECMAScript);
   std::smatch m;
   if (!std::regex_match(t, m, declRegex)) return false;
   std::string qualifiers = trim_copy(m[1].str());
   std::string rawType = trim_copy(m[2].str());
-  std::string rawName = trim_copy(m[3].str());
-  std::string rawVal = trim_copy(m[4].str());
+  std::string stars = trim_copy(m[3].str());
+  std::string rawName = trim_copy(m[4].str());
+  std::string rawVal = m[5].matched ? trim_copy(m[5].str()) : std::string();
   if (rawType.empty()) return false;
   if (rawName == "if" || rawName == "for" || rawName == "while" || rawName == "return")
     return false;
   std::string fullType = trim_copy(qualifiers + (qualifiers.empty() ? "" : " ") + rawType);
+  if (!stars.empty()) {
+    fullType = trim_copy(fullType + " " + stars);
+  }
   fullType = normalizeValue(fullType);
   std::string lower = fullType;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
@@ -824,7 +839,12 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           trimmed.rfind("float ", 0) == 0 || trimmed.rfind("double ", 0) == 0 ||
           trimmed.rfind("char ", 0) == 0 || trimmed.rfind("std::", 0) == 0 ||
           trimmed.rfind("const ", 0) == 0 || trimmed.rfind("string ", 0) == 0 ||
-          trimmed.rfind("long ", 0) == 0 || trimmed.rfind("unsigned ", 0) == 0;
+          trimmed.rfind("long ", 0) == 0 || trimmed.rfind("unsigned ", 0) == 0 ||
+          trimmed.find('*') != std::string::npos || trimmed.find("FILE") != std::string::npos;
+      if (!isDecl) {
+        std::string tmpT, tmpN, tmpV;
+        if (parseDeclaration(trimmed + ";", tmpT, tmpN, tmpV)) isDecl = true;
+      }
       if (isDecl) {
         toEval = trimmed + ";\n";
         needsSemi = true;

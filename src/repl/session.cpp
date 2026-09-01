@@ -240,6 +240,13 @@ bool Session::isIncomplete(const std::string &buffer) const {
     if (last == ';' || last == '}') return false;
     // Trailing : , = are incomplete
     if (last == ':' || last == '=' || last == ',') return true;
+    // Pointer/reference declaration without terminator: "FILE *file" without ; -> incomplete
+    // Fixes ambiguity where FILE *file without ; was evaluated as incomplete and then auto-corrected,
+    // but FILE *file; with ; at next line caused duplicate redefinition.
+    if ((t.find('*') != std::string::npos || t.find('&') != std::string::npos) && last != ';' && last != '}' && last != '{') {
+      static const std::regex rePtrDecl(R"(.*\b\w+\s*[\*\&]+\s*\w+\s*$)");
+      if (std::regex_match(t, rePtrDecl)) return true;
+    }
     // Template header without body: "template <...>" or "template" alone at end
     // Also handles "template <typename T>\n" -> incomplete until next decl + body
     {
@@ -537,7 +544,23 @@ void Session::runInteractive() {
           continue;
         }
       }
-      buffer_ += line + "\n";
+      // Fix for FILE *file without ; at [1] + FILE *file; with ; at [2] being two declarations
+      // If buffer_ is "FILE *file" without ; and line is "FILE *file;" with ; and same, replace instead of append
+      {
+        auto trim2 = [](std::string s) {
+          size_t a = s.find_first_not_of(" \t\r\n");
+          if (a == std::string::npos) return std::string();
+          size_t b = s.find_last_not_of(" \t\r\n");
+          return s.substr(a, b - a + 1);
+        };
+        std::string bufTrim = trim2(buffer_);
+        std::string lineTrim = trim2(line);
+        if (!bufTrim.empty() && !lineTrim.empty() && bufTrim.back() != ';' && lineTrim.back() == ';' && bufTrim + ";" == lineTrim) {
+          buffer_ = line + "\n";
+        } else {
+          buffer_ += line + "\n";
+        }
+      }
       bool incomplete = false;
       if (!line.empty() && line.back() == '\\')
         incomplete = true;
@@ -600,7 +623,21 @@ void Session::runInteractive() {
         continue;
       }
     }
-    buffer_ += line + "\n";
+    {
+      auto trim2 = [](std::string s) {
+        size_t a = s.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos) return std::string();
+        size_t b = s.find_last_not_of(" \t\r\n");
+        return s.substr(a, b - a + 1);
+      };
+      std::string bufTrim = trim2(buffer_);
+      std::string lineTrim = trim2(line);
+      if (!bufTrim.empty() && !lineTrim.empty() && bufTrim.back() != ';' && lineTrim.back() == ';' && bufTrim + ";" == lineTrim) {
+        buffer_ = line + "\n";
+      } else {
+        buffer_ += line + "\n";
+      }
+    }
     bool incomplete = false;
     if (!line.empty() && line.back() == '\\')
       incomplete = true;
