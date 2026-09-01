@@ -619,7 +619,7 @@ bool Interpreter::parseDeclaration(const std::string &code, std::string &type,
                                    std::string &name, std::string &value) {
   std::string t = trim_copy(code);
   static std::regex declRegex(
-      R"(^\s*((?:(?:const|constexpr|static|volatile|inline|extern|mutable)\s+)*)([\w:\<\>\,\s]+?)\s*([\*\&]*)\s*(\w+)\s*(?:=\s*(.+?))?\s*;?\s*$)",
+      R"(^\s*((?:(?:const|constexpr|static|volatile|inline|extern|mutable)\s+)*)([\w:\<\>\,\s]+?)\s*([\*\&]*)\s*(\w+)\s*(?:=\s*(.+?)|\s*(\(.+?\)|\{.+?\}))?\s*;?\s*$)",
       std::regex::ECMAScript);
   std::smatch m;
   if (!std::regex_match(t, m, declRegex)) return false;
@@ -627,7 +627,10 @@ bool Interpreter::parseDeclaration(const std::string &code, std::string &type,
   std::string rawType = trim_copy(m[2].str());
   std::string stars = trim_copy(m[3].str());
   std::string rawName = trim_copy(m[4].str());
-  std::string rawVal = m[5].matched ? trim_copy(m[5].str()) : std::string();
+  std::string rawVal;
+  if (m[5].matched) rawVal = trim_copy(m[5].str());
+  else if (m[6].matched) rawVal = trim_copy(m[6].str());
+  else rawVal = std::string();
   if (rawType.empty()) return false;
   if (rawName == "if" || rawName == "for" || rawName == "while" || rawName == "return")
     return false;
