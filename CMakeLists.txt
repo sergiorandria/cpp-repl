@@ -121,12 +121,22 @@ target_include_directories(cpp-repl PRIVATE
 )
 
 # Detect clang resource dir and project include dir (avoid hardcoded /home/sergio paths)
-find_program(CLANG_DETECT clang clang-22)
-if(CLANG_DETECT)
-  execute_process(COMMAND ${CLANG_DETECT} -print-resource-dir
+# Prefer the compiler actually used for the build (clang++-22 on CI), otherwise fallback to clang-22
+set(_CLANG_FOR_RESOURCE "${CMAKE_CXX_COMPILER}")
+if(_CLANG_FOR_RESOURCE)
+  execute_process(COMMAND ${_CLANG_FOR_RESOURCE} -print-resource-dir
     OUTPUT_VARIABLE CLANG_RESOURCE_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET)
+endif()
+if(NOT CLANG_RESOURCE_DIR OR CLANG_RESOURCE_DIR STREQUAL "")
+  find_program(CLANG_DETECT NAMES clang-22 clang)
+  if(CLANG_DETECT)
+    execute_process(COMMAND ${CLANG_DETECT} -print-resource-dir
+      OUTPUT_VARIABLE CLANG_RESOURCE_DIR
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET)
+  endif()
 endif()
 if(NOT CLANG_RESOURCE_DIR OR CLANG_RESOURCE_DIR STREQUAL "")
   # Fallback probes for Arch vs Ubuntu layout
