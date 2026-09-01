@@ -381,17 +381,17 @@ bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   return true;
 }
 
-bool Interpreter::addIncludePath(const std::string &path, std::string &err) {
+auto Interpreter::addIncludePath(const std::string &path, std::string &err) -> bool {
   for (auto &p : includePaths_) if (p == path) return true;
   includePaths_.push_back(path);
   return reinitWithCurrentOptions(err);
 }
-bool Interpreter::addLibraryPath(const std::string &path, std::string &err) {
+auto Interpreter::addLibraryPath(const std::string &path, std::string &err) -> bool {
   for (auto &p : libraryPaths_) if (p == path) return true;
   libraryPaths_.push_back(path);
   return reinitWithCurrentOptions(err);
 }
-bool Interpreter::addLibrary(const std::string &lib, std::string &err) {
+auto Interpreter::addLibrary(const std::string &lib, std::string &err) -> bool {
   libraries_.push_back(lib);
   if (!initialized_) return true;
   auto tryLoad = [&](const std::string &path) -> bool {
