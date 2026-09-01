@@ -215,15 +215,43 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     std::cout << "Current: " << (int)interp_.currentVersion() << "\n";
     return true;
   }
-  if (t == ":reset") {
+  if (t == ":reset" || t == ":flush" || t == ":forget" || t == ":clearstack" || t == ":drop") {
+    // :flush is the explicit "flush the stack" requested by users — clears all definitions
+    // so that already-defined variables no longer exist and can be redefined.
+    // Aliases: :forget, :clearstack, :drop all map to the same full reset for now.
+    // Future: :forget <var> could drop a single variable via Interpreter::forget().
+    std::string target;
+    if (t.rfind(":forget", 0) == 0) target = trim(t.substr(7));
+    else if (t.rfind(":flush", 0) == 0) target = trim(t.substr(6));
+    else if (t.rfind(":clearstack", 0) == 0) target = trim(t.substr(11));
+    else if (t.rfind(":drop", 0) == 0) target = trim(t.substr(5));
+
+    // If a specific variable name is given, try to forget just that variable
+    if (!target.empty() && target[0] != ':' && target.find(' ') == std::string::npos && target.find('\t') == std::string::npos) {
+      // Single word argument like ":flush x" or ":forget myVar"
+      // For now, treat as full flush with hint (per-variable forgetting needs PTU tracking)
+      // We still do a full reset but tell the user what was requested
+      interp_.reset(err);
+      if (!err.empty())
+        std::cerr << "flush error: " << err << "\n";
+      else
+        std::cout << "[flushed stack" << (target.empty() ? "" : std::string(" (") + target + ")") << " — all definitions cleared, variables no longer exist]\n";
+      promptCount_ = 1;
+      hasLastTiming_ = false;
+      return true;
+    }
+    if (!target.empty()) {
+      std::cout << "usage: :flush [var]  (flush stack — clears all definitions so variables can be redefined)\n";
+      std::cout << "       aliases: :forget, :clearstack, :drop (same as :reset)\n";
+      return true;
+    }
     interp_.reset(err);
     if (!err.empty())
       std::cerr << "reset error: " << err << "\n";
-    else {
-      std::cout << "[reset]\n";
-      promptCount_ = 1;
-      hasLastTiming_ = false;
-    }
+    else
+      std::cout << (t.rfind(":flush",0)==0 || t.rfind(":forget",0)==0 || t.rfind(":clearstack",0)==0 || t.rfind(":drop",0)==0 ? "[flushed stack — all definitions cleared, variables no longer exist]\n" : "[reset]\n");
+    promptCount_ = 1;
+    hasLastTiming_ = false;
     return true;
   }
   if (t == ":clear" || t == ":cls" || t == ":c" || t == "clear" || t == "cls") {
