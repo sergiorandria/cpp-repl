@@ -18,6 +18,7 @@ struct Options {
   bool noInteractive = false; ///< Exit after -e/file execution.
   bool showHelp = false; ///< Print help.
   bool showVersion = false; ///< Print version.
+  bool noColor = false; ///< Disable colored prompt/timing.
   std::vector<std::string> execCodes; ///< Code from -e flags.
   std::vector<std::string> files; ///< Input files.
   std::vector<std::string> includePaths; ///< Include paths (-I).

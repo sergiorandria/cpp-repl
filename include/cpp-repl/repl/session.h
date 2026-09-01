@@ -55,8 +55,23 @@ private:
    */
   bool isIncomplete(const std::string &buffer) const;
 
-  interpreter::Interpreter &interp_;
-  std::string buffer_;
+  /** @brief Whether to use ANSI color for prompt. */
+  bool shouldUseColor(bool forReadline) const;
+  /** @brief Format duration in ms for display. */
+  std::string formatDuration(double ms) const;
+  /** @brief Build primary prompt string. */
+  std::string buildPrimaryPrompt(bool forReadline) const;
+  /** @brief Build continuation prompt string. */
+  std::string buildContinuationPrompt(bool forReadline) const;
+  /** @brief Print timing line after execution. */
+  void printTimingLine(bool success, double ms) const;
+
+  interpreter::Interpreter &interp_; ///< Bound interpreter instance.
+  std::string buffer_; ///< Current multiline buffer.
+  int promptCount_ = 1; ///< Prompt counter for numbered prompts.
+  double lastDurationMs_ = 0.0; ///< Last execution time in ms.
+  bool lastSuccess_ = true; ///< Last execution success flag.
+  bool hasLastTiming_ = false; ///< Whether timing is available.
 };
 
 } // namespace repl

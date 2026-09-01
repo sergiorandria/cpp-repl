@@ -20,6 +20,10 @@
 
 #include <iostream>
 #include <string>
+#include <cstdlib>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 int main(int argc, char **argv) {
   std::string cliErr;
@@ -126,7 +130,25 @@ int main(int argc, char **argv) {
   if (opts.noInteractive)
     return 0;
 
-  // Show help and current capabilities
+  // Honor --no-color early (sets env for Session::shouldUseColor)
+  if (opts.noColor) {
+    setenv("CPP_REPL_NO_COLOR", "1", 1);
+    setenv("NO_COLOR", "1", 1);
+  }
+
+  // Show help and current capabilities (with subtle color when enabled)
+  {
+    bool useColor = !opts.noColor && isatty(STDOUT_FILENO) &&
+                    !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+    const char *term = getenv("TERM");
+    if (useColor && term && std::string(term) == "dumb") useColor = false;
+    if (useColor) {
+      std::cout << "\033[90m— cpp-repl \033[1;36mC++ REPL\033[0m\033[90m "
+                   "(LLVM 22, O0) — type \033[33m:help\033[90m, "
+                   "\033[33m:quit\033[90m, prompt shows \033[36mcpp:C++\033[90m"
+                   " version, [n] and \033[32m⏱ time\033[90m —\033[0m\n";
+    }
+  }
   interp.help();
   std::cout << "BigInt available: "
             << (cpprepl::utils::BigIntSupport::isAvailable()

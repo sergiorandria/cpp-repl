@@ -3,7 +3,11 @@
  * @brief Interactive session loop and command handling.
  */
 #include "cpp-repl/repl/session.h"
+#include "cpp-repl/utils/version_detector.h"
+#include <chrono>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <cstdlib>
 #ifdef _WIN32
@@ -23,7 +27,134 @@ namespace repl {
 Session::Session(interpreter::Interpreter &interp) : interp_(interp) {}
 
 bool Session::exec(const std::string &code, std::string &err) {
-  return interp_.eval(code, err);
+  auto t0 = std::chrono::steady_clock::now();
+  bool ok = interp_.eval(code, err);
+  auto t1 = std::chrono::steady_clock::now();
+  lastDurationMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  lastSuccess_ = ok;
+  hasLastTiming_ = true;
+  ++promptCount_;
+  return ok;
+}
+
+// ── Prompt helpers ──────────────────────────────────────────────────────────
+bool Session::shouldUseColor(bool /*forReadline*/) const {
+  if (std::getenv("NO_COLOR") || std::getenv("CPP_REPL_NO_COLOR") ||
+      std::getenv("NO_COLOUR"))
+    return false;
+  if (std::getenv("FORCE_COLOR") || std::getenv("CLICOLOR_FORCE"))
+    return true;
+  const char *term = std::getenv("TERM");
+  if (term && std::string(term) == "dumb")
+    return false;
+#ifdef _WIN32
+  return _isatty(_fileno(stdout)) != 0;
+#else
+  return isatty(STDOUT_FILENO) != 0;
+#endif
+}
+
+std::string Session::formatDuration(double ms) const {
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(2);
+  if (ms < 1.0) {
+    oss << std::setprecision(2) << ms << "ms";
+  } else if (ms < 1000.0) {
+    oss << std::setprecision(1) << ms << "ms";
+  } else if (ms < 60000.0) {
+    oss << std::setprecision(2) << (ms / 1000.0) << "s";
+  } else {
+    int totalSec = static_cast<int>(ms / 1000.0);
+    int minutes = totalSec / 60;
+    double secs = (ms / 1000.0) - minutes * 60;
+    oss << minutes << "m" << std::fixed << std::setprecision(1) << secs << "s";
+  }
+  return oss.str();
+}
+
+std::string Session::buildPrimaryPrompt(bool forReadline) const {
+  bool color = shouldUseColor(forReadline);
+  auto wrap = [&](const char *code) -> std::string {
+    if (!color) return "";
+    if (forReadline) return std::string("\001") + code + "\002";
+    return std::string(code);
+  };
+  const std::string RST = wrap("\033[0m");
+  const std::string BOLD_CYAN = wrap("\033[1;36m");
+  const std::string DIM = wrap("\033[2m");
+  const std::string DIM_GREY = wrap("\033[90m");
+  const std::string YELLOW = wrap("\033[33m");
+  const std::string GREEN = wrap("\033[32m");
+  const std::string RED = wrap("\033[31m");
+
+  std::string verStr = utils::VersionDetector::toString(interp_.currentVersion());
+  std::string verCol;
+  if (interp_.currentVersion() == utils::StdVersion::Cpp23)
+    verCol = wrap("\033[1;35m");
+  else if (interp_.currentVersion() == utils::StdVersion::Cpp20)
+    verCol = YELLOW;
+  else
+    verCol = DIM_GREY;
+
+  std::string out;
+  if (color) {
+    out += BOLD_CYAN + "cpp" + RST;
+    out += DIM_GREY + ":" + RST + verCol + verStr + RST;
+    out += " " + DIM + "[" + std::to_string(promptCount_) + "]" + RST;
+    if (hasLastTiming_) {
+      std::string t = formatDuration(lastDurationMs_);
+      std::string statusCol = lastSuccess_ ? GREEN : RED;
+      std::string sym = lastSuccess_ ? "✓" : "✗";
+      out += " " + DIM_GREY + "(" + RST + statusCol + t + " " + sym + RST + DIM_GREY + ")" + RST;
+    }
+    out += DIM_GREY + ">" + RST + " ";
+  } else {
+    out = "cpp:" + verStr + " [" + std::to_string(promptCount_) + "]";
+    if (hasLastTiming_) {
+      out += " (" + formatDuration(lastDurationMs_) + (lastSuccess_ ? " ok" : " err") + ")";
+    }
+    out += "> ";
+  }
+  return out;
+}
+
+std::string Session::buildContinuationPrompt(bool forReadline) const {
+  bool color = shouldUseColor(forReadline);
+  auto wrap = [&](const char *code) -> std::string {
+    if (!color) return "";
+    if (forReadline) return std::string("\001") + code + "\002";
+    return std::string(code);
+  };
+  const std::string RST = wrap("\033[0m");
+  const std::string DIM_YELLOW = wrap("\033[2;33m");
+  if (color) {
+    return DIM_YELLOW + "...>" + RST + " ";
+  } else {
+    return "...> ";
+  }
+}
+
+void Session::printTimingLine(bool success, double ms) const {
+#ifdef _WIN32
+  bool isTTY = _isatty(_fileno(stdout)) != 0;
+#else
+  bool isTTY = isatty(STDOUT_FILENO) != 0;
+#endif
+  if (!isTTY) return;
+  bool color = shouldUseColor(false);
+  std::string t = formatDuration(ms);
+  if (color) {
+    const char *grey = "\033[90m";
+    const char *green = "\033[32m";
+    const char *red = "\033[31m";
+    const char *rst = "\033[0m";
+    const char *symCol = success ? green : red;
+    const char *sym = success ? "✓" : "✗";
+    std::cout << grey << "⏱  " << t << " " << symCol << sym << grey << rst << "\n";
+  } else {
+    std::cout << "⏱  " << t << (success ? " ok" : " err") << "\n";
+  }
+  std::cout << std::flush;
 }
 
 bool Session::isIncomplete(const std::string &buffer) const {
@@ -93,32 +224,25 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     interp_.reset(err);
     if (!err.empty())
       std::cerr << "reset error: " << err << "\n";
-    else
+    else {
       std::cout << "[reset]\n";
+      promptCount_ = 1;
+      hasLastTiming_ = false;
+    }
     return true;
   }
   if (t == ":clear" || t == ":cls" || t == ":c" || t == "clear" || t == "cls") {
-    // Robust cross-platform terminal clear: works on every terminal type
-    // 1. isatty check – when piped/redirected there is no screen to clear
-    // 2. HAS_READLINE – use terminfo-aware rl_clear_screen when available
-    // 3. Windows: Win32 Console API (no external process), fallback to cls
-    // 4. POSIX: TERM=dumb -> newlines; TERM set -> `clear` (terminfo),
-    //    fallback to ANSI with scrollback clear, fallback to newlines
 #ifdef HAS_READLINE
 #ifdef _WIN32
     if (_isatty(_fileno(stdin)) || _isatty(_fileno(stdout))) {
 #else
     if (isatty(STDOUT_FILENO) || isatty(STDIN_FILENO)) {
 #endif
-      // readline's clear is terminfo-aware (honors TERM, works in tmux/screen/xterm)
       rl_clear_screen(0, 0);
       rl_on_new_line();
-      // Also emit ANSI / system clear so non-readline output and scrollback are cleared
     }
 #endif
 #ifdef _WIN32
-    // Windows: try native Console API first – works even without `cls` in PATH
-    // and on all Windows consoles (cmd.exe, PowerShell, Windows Terminal)
     {
       HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
       if (hOut != INVALID_HANDLE_VALUE && hOut != nullptr) {
@@ -131,7 +255,6 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
           FillConsoleOutputAttribute(hOut, csbi.wAttributes, cells, topLeft, &written);
           SetConsoleCursorPosition(hOut, topLeft);
         } else {
-          // API failed (e.g., redirected handle) – fallback
           if (std::system("cls") != 0) {
             std::cout << "\033[2J\033[3J\033[H" << std::flush;
           }
@@ -143,29 +266,19 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       }
     }
 #else
-    // POSIX: check if we are actually attached to a terminal
     {
       bool isTTY = isatty(STDOUT_FILENO) || isatty(STDERR_FILENO) || isatty(STDIN_FILENO);
       if (!isTTY) {
-        // Piped / redirected / non-interactive – simulate clear with newlines
         std::cout << std::string(100, '\n') << std::flush;
       } else {
         const char *term = std::getenv("TERM");
         std::string termStr = term ? term : "";
         if (termStr.empty() || termStr == "dumb") {
-          // Dumb terminal (e.g., emacs shell, dumb) – ANSI not supported
           std::cout << std::string(100, '\n') << std::flush;
         } else {
-          // Try terminfo-based `clear` – honors TERM (xterm-256color, screen, tmux, etc.)
-          // Returns 0 on success; non-zero if `clear` missing or TERM unknown
           int rc = std::system("clear");
           if (rc != 0) {
-            // Fallback 1: ANSI – works on virtually all modern terminals
-            // \033[2J clear screen, \033[3J clear scrollback, \033[H home cursor
             std::cout << "\033[2J\033[3J\033[H" << std::flush;
-            // Fallback 2: if ANSI somehow not honored, ensure visual separation
-            // Heuristic: if TERM is very minimal, also push with newlines is redundant
-            // so we rely on ANSI alone here. The 100-newline fallback above covers dumb.
           }
         }
       }
@@ -193,7 +306,6 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       std::cout << "usage: :lib <path> (absolute, relative, or -l name)\n";
     else {
       std::string e;
-      // Use addLibrary for bare names (searches -L paths), else loadLibrary for direct path
       bool ok = false;
       if (path.find('/') != std::string::npos || path.find(".so") != std::string::npos) {
         ok = interp_.loadLibrary(path, e);
@@ -220,17 +332,19 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     std::string e;
     if (!interp_.undo(n, e))
       std::cerr << "undo error: " << e << "\n";
-    else
+    else {
       std::cout << "[undid " << n << "]\n";
+      if (promptCount_ > (int)n + 1) promptCount_ -= n;
+      else promptCount_ = 1;
+      hasLastTiming_ = false;
+    }
     return true;
   }
-  // Include path handling (absolute & relative) – interactive :I / :include
   if (t.rfind(":I", 0) == 0 || t.rfind(":include", 0) == 0 || t.rfind(":inc", 0) == 0) {
     std::string path;
     if (t.rfind(":I", 0) == 0) path = trim(t.substr(2));
     else if (t.rfind(":include", 0) == 0) path = trim(t.substr(8));
     else path = trim(t.substr(4));
-    // Support ":I=path" or ":I path"
     if (!path.empty() && path[0] == '=') path = trim(path.substr(1));
     if (path.empty()) { std::cout << "usage: :I <path>  (add include path, absolute or relative)\n"; return true; }
     std::string e;
@@ -265,6 +379,14 @@ void Session::runInteractive() {
     return s.substr(a, b - a + 1);
   };
 
+  auto printError = [&](const std::string &msg) {
+    bool color = shouldUseColor(false);
+    if (color)
+      std::cerr << "\033[31merror:\033[0m " << msg << "\n";
+    else
+      std::cerr << "error: " << msg << "\n";
+  };
+
 #ifdef HAS_READLINE
   bool useReadline = isatty(STDIN_FILENO);
   if (useReadline) {
@@ -275,8 +397,9 @@ void Session::runInteractive() {
     if (!histFile.empty()) read_history(histFile.c_str());
     char *raw = nullptr;
     while (true) {
-      const char *prompt = buffer_.empty() ? "cpp> " : "...> ";
-      raw = readline(prompt);
+      std::string promptStr = buffer_.empty() ? buildPrimaryPrompt(true)
+                                              : buildContinuationPrompt(true);
+      raw = readline(promptStr.c_str());
       if (!raw) {
         std::cout << "\nbye\n";
         break;
@@ -311,10 +434,6 @@ void Session::runInteractive() {
       if (incomplete) {
         continue;
       }
-      // Complete input ready: store entire buffer as single history entry
-      // so that up/down navigation recalls whole function bodies at once
-      // instead of line-by-line. This makes a multi-line function definition
-      // (e.g. "int foo() {\n  return 42;\n}") appear as one history item.
       {
         std::string histEntry = buffer_;
         while (!histEntry.empty() &&
@@ -329,10 +448,20 @@ void Session::runInteractive() {
         }
       }
       std::string err;
-      if (!interp_.eval(buffer_, err)) {
-        if (!err.empty())
-          std::cerr << "error: " << err << "\n";
+      auto t0 = std::chrono::steady_clock::now();
+      bool ok = interp_.eval(buffer_, err);
+      auto t1 = std::chrono::steady_clock::now();
+      double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+      lastDurationMs_ = ms;
+      lastSuccess_ = ok;
+      hasLastTiming_ = true;
+      if (!ok) {
+        if (!err.empty()) printError(err);
+        printTimingLine(false, ms);
+      } else {
+        printTimingLine(true, ms);
       }
+      ++promptCount_;
       buffer_.clear();
     }
     if (!histFile.empty()) write_history(histFile.c_str());
@@ -340,7 +469,7 @@ void Session::runInteractive() {
   }
 #endif
   std::string line;
-  std::cout << "cpp> " << std::flush;
+  std::cout << buildPrimaryPrompt(false) << std::flush;
   while (std::getline(std::cin, line)) {
     std::string t = trim(line);
     if (buffer_.empty()) {
@@ -348,12 +477,12 @@ void Session::runInteractive() {
           t == "exit" || t == "quit")
         break;
       if (t.empty()) {
-        std::cout << "cpp> " << std::flush;
+        std::cout << buildPrimaryPrompt(false) << std::flush;
         continue;
       }
       std::string err;
       if (handleCommand(line, err)) {
-        std::cout << "cpp> " << std::flush;
+        std::cout << buildPrimaryPrompt(false) << std::flush;
         continue;
       }
     }
@@ -364,16 +493,26 @@ void Session::runInteractive() {
     else if (isIncomplete(buffer_))
       incomplete = true;
     if (incomplete) {
-      std::cout << "...> " << std::flush;
+      std::cout << buildContinuationPrompt(false) << std::flush;
       continue;
     }
     std::string err;
-    if (!interp_.eval(buffer_, err)) {
-      if (!err.empty())
-        std::cerr << "error: " << err << "\n";
+    auto t0 = std::chrono::steady_clock::now();
+    bool ok = interp_.eval(buffer_, err);
+    auto t1 = std::chrono::steady_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    lastDurationMs_ = ms;
+    lastSuccess_ = ok;
+    hasLastTiming_ = true;
+    if (!ok) {
+      if (!err.empty()) printError(err);
+      printTimingLine(false, ms);
+    } else {
+      printTimingLine(true, ms);
     }
+    ++promptCount_;
     buffer_.clear();
-    std::cout << "cpp> " << std::flush;
+    std::cout << buildPrimaryPrompt(false) << std::flush;
   }
   std::cout << "\nbye\n";
 }

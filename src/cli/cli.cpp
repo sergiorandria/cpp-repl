@@ -33,6 +33,10 @@ Options parse(int argc, char **argv, std::string &err) {
       opts.showScaffold = false;
     else if (arg == "--no-interactive")
       opts.noInteractive = true;
+    else if (arg == "--no-color" || arg == "--nocolor" || arg == "--color=never" || arg == "--color=none")
+      opts.noColor = true;
+    else if (arg == "--color" || arg == "--color=always" || arg == "--color=auto")
+      opts.noColor = false;
     else if (arg == "-e") {
       if (i + 1 >= argc) { err = "-e requires argument"; return opts; }
       opts.execCodes.push_back(argv[++i]);
@@ -107,6 +111,8 @@ void printHelp(const char *prog) {
          "  -v, --version        show version\n"
          "  --scaffold           show low-level VM scaffold\n"
          "  --no-interactive     exit after file/-e execution\n"
+         "  --no-color           disable colored prompt & timing\n"
+         "  --color[=when]       force color (always/auto/never)\n"
          "  -e <code>            execute raw C++ code\n"
          "  -I <path>, -I<path>   add include search path (absolute or relative)\n"
          "  -L <path>, -L<path>   add library search path\n"
@@ -118,6 +124,8 @@ void printHelp(const char *prog) {
          "REPL: :help :dump :reset :load :lib :I :L :version :quit\n"
          "  :I <path>  add include path (interactive)\n"
          "  :L <path>  add library path\n"
+         "Prompt: colored cpp:C++17/20/23 [n] (time ✓/✗)> with execution time\n"
+         "        honor NO_COLOR / CPP_REPL_NO_COLOR=1 and --no-color, TERM=dumb\n"
          "C++ versions: auto-detects C++20/23 keywords "
          "(concept/requires/import)\n"
          "BigInt: boost::multiprecision::cpp_int / bigint\n"

@@ -19,6 +19,10 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <cstdlib>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace {
 /**
@@ -1091,9 +1095,20 @@ void Interpreter::reset(std::string &err) {
     err.clear();
 }
 void Interpreter::help() const {
+  // Show prompt help with color hint when stdout is a tty
+  bool useColor = isatty(STDOUT_FILENO) &&
+                  !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+  const char *term = getenv("TERM");
+  if (useColor && term && std::string(term) == "dumb") useColor = false;
+  auto col = [&](const char* code)->std::string { return useColor ? code : ""; };
+  auto rst = col("\033[0m");
+  auto cyan = col("\033[36m");
+  auto grey = col("\033[90m");
   std::cout << "C++ REPL (LLVM VM, O0, no optimizations) ["
             << utils::VersionDetector::toString(currentVersion_)
             << "]\n"
+               "Prompt: " + cyan + "cpp" + rst + grey + ":" + rst + cyan + utils::VersionDetector::toString(currentVersion_) + rst + grey + " [n] (time " + rst + col("\033[32m") + "✓" + rst + grey + "/" + rst + col("\033[31m") + "✗" + rst + grey + ")" + rst + grey + ">" + rst + "  colored, shows C++ version, input count & last exec time\n"
+               "        use " + grey + "--no-color" + rst + " or " + grey + "NO_COLOR=1" + rst + " to disable, " + grey + "FORCE_COLOR=1" + rst + " to force\n"
                "Commands:\n"
                "  :help  :h       show this help\n"
                "  :quit  :exit :q exit REPL\n"
@@ -1126,7 +1141,8 @@ void Interpreter::help() const {
                "C++20/23: auto-detects 'concept', 'requires', 'import' etc. "
                "and switches to -std=c++20/23\n"
                "\n"
-               "Multiline: unbalanced { ( [ keeps buffering with ...> prompt\n";
+               "Multiline: unbalanced { ( [ keeps buffering with " + col("\033[33m") + "...>" + rst + " prompt\n"
+               "Timing:  " + grey + "⏱" + rst + " line after each exec + inline in next prompt (e.g. " + grey + "(12.3ms ✓)" + rst + ")\n";
 }
 
 } // namespace interpreter
