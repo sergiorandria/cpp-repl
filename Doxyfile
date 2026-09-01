@@ -1,0 +1,13 @@
+PROJECT_NAME           = "cpp-repl"
+PROJECT_NUMBER         = 0.3.0
+OUTPUT_DIRECTORY       = docs
+INPUT                  = include src README.md
+FILE_PATTERNS          = *.h *.hpp *.cpp
+RECURSIVE              = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+HAVE_DOT               = NO
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO

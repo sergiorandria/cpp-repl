@@ -5,6 +5,7 @@
 #include "cpp-repl/interpreter/interpreter.h"
 #include "cpp-repl/utils/bigint.h"
 #include "cpp-repl/utils/highlight.h"
+#include "cpp-repl/utils/incomplete_detector.h"
 #include "cpp-repl/utils/version_detector.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Interpreter/Interpreter.h"
@@ -1132,33 +1133,8 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
 
 bool Interpreter::eval(const std::string &code, std::string &err,
                        bool &incomplete) {
-  incomplete = false;
-  int braces = 0, parens = 0, brackets = 0;
-  bool inSingle = false, inDouble = false, inLineComment = false, inBlockComment = false;
-  bool escaped = false;
-  for (size_t i = 0; i < code.size(); ++i) {
-    char c = code[i];
-    char n = (i + 1 < code.size()) ? code[i + 1] : '\0';
-    if (inLineComment) { if (c == '\n') inLineComment = false; continue; }
-    if (inBlockComment) { if (c == '*' && n == '/') { inBlockComment = false; ++i; } continue; }
-    if (inSingle) { if (escaped) escaped = false; else if (c == '\\') escaped = true; else if (c == '\'') inSingle = false; continue; }
-    if (inDouble) { if (escaped) escaped = false; else if (c == '\\') escaped = true; else if (c == '"') inDouble = false; continue; }
-    if (c == '/' && n == '/') { inLineComment = true; ++i; continue; }
-    if (c == '/' && n == '*') { inBlockComment = true; ++i; continue; }
-    if (c == '\'') { inSingle = true; continue; }
-    if (c == '"') { inDouble = true; continue; }
-    if (c == '{') ++braces;
-    else if (c == '}') --braces;
-    else if (c == '(') ++parens;
-    else if (c == ')') --parens;
-    else if (c == '[') ++brackets;
-    else if (c == ']') --brackets;
-  }
-  if (inDouble || inSingle || inBlockComment) { incomplete = true; return true; }
-  if (braces > 0 || parens > 0 || brackets > 0) {
-    incomplete = true;
-    return true;
-  }
+  incomplete = utils::IncompleteDetector::isIncomplete(code);
+  if (incomplete) return true;
   return eval(code, err);
 }
 

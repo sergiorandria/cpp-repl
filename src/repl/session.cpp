@@ -4,6 +4,7 @@
  */
 #include "cpp-repl/repl/session.h"
 #include "cpp-repl/utils/highlight.h"
+#include "cpp-repl/utils/incomplete_detector.h"
 #include "cpp-repl/utils/version_detector.h"
 #include <chrono>
 #include <regex>
@@ -190,137 +191,7 @@ void Session::printHighlightedEcho(const std::string &code) const {
 }
 
 bool Session::isIncomplete(const std::string &buffer) const {
-  int braces = 0, parens = 0, brackets = 0;
-  bool inSingle = false, inDouble = false, inLineComment = false, inBlockComment = false;
-  bool escaped = false;
-  for (size_t i = 0; i < buffer.size(); ++i) {
-    char c = buffer[i];
-    char n = (i + 1 < buffer.size()) ? buffer[i + 1] : '\0';
-    if (inLineComment) {
-      if (c == '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c == '*' && n == '/') { inBlockComment = false; ++i; }
-      continue;
-    }
-    if (inSingle) {
-      if (escaped) escaped = false;
-      else if (c == '\\') escaped = true;
-      else if (c == '\'') inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (escaped) escaped = false;
-      else if (c == '\\') escaped = true;
-      else if (c == '"') inDouble = false;
-      continue;
-    }
-    if (c == '/' && n == '/') { inLineComment = true; ++i; continue; }
-    if (c == '/' && n == '*') { inBlockComment = true; ++i; continue; }
-    if (c == '\'') { inSingle = true; continue; }
-    if (c == '"') { inDouble = true; continue; }
-    if (c == '{') ++braces;
-    else if (c == '}') --braces;
-    else if (c == '(') ++parens;
-    else if (c == ')') --parens;
-    else if (c == '[') ++brackets;
-    else if (c == ']') --brackets;
-  }
-  if (inDouble || inSingle || inBlockComment) return true;
-  if (braces > 0 || parens > 0 || brackets > 0) return true;
-
-  // ── Multiline definition support (template <typename T> etc.) ──
-  // Trim buffer for heuristic checks
-  {
-    auto trimCopy = [](const std::string &s) -> std::string {
-      size_t a = s.find_first_not_of(" \t\r\n");
-      if (a == std::string::npos) return "";
-      size_t b = s.find_last_not_of(" \t\r\n");
-      return s.substr(a, b - a + 1);
-    };
-    std::string t = trimCopy(buffer);
-    if (t.empty()) return false;
-    char last = t.back();
-    if (last == ';' || last == '}') return false;
-    // Trailing : , = are incomplete
-    if (last == ':' || last == '=' || last == ',') return true;
-    // Pointer/reference declaration without terminator: "FILE *file" without ; -> incomplete
-    // Fixes ambiguity where FILE *file without ; was evaluated as incomplete and then auto-corrected,
-    // but FILE *file; with ; at next line caused duplicate redefinition.
-    if ((t.find('*') != std::string::npos || t.find('&') != std::string::npos) && last != ';' && last != '}' && last != '{') {
-      static const std::regex rePtrDecl(R"(.*\b\w+\s*[\*\&]+\s*\w+\s*$)");
-      if (std::regex_match(t, rePtrDecl)) return true;
-    }
-    // Template header without body: "template <...>" or "template" alone at end
-    // Also handles "template <typename T>\n" -> incomplete until next decl + body
-    {
-      // Simple check: if "template" appears and last ';' / '}' is before last "template"
-      size_t posTpl = t.rfind("template");
-      if (posTpl != std::string::npos) {
-        size_t lastSemi = t.rfind(';');
-        size_t lastRCurly = t.rfind('}');
-        bool hasTermAfter = false;
-        if (lastSemi != std::string::npos && lastSemi > posTpl) hasTermAfter = true;
-        if (lastRCurly != std::string::npos && lastRCurly > posTpl) hasTermAfter = true;
-        if (!hasTermAfter) {
-          // Check if ends with template header pattern
-          // Use simple heuristic: ends with "template" or ">" or identifier and no terminator
-          // Regex: .*template\s*(<[^>]*>)?\s*$
-          static const std::regex reTplHeader(R"(.*\btemplate\s*(<[^>]*>)?\s*$)",
-                                              std::regex::ECMAScript);
-          std::smatch m;
-          if (std::regex_match(t, m, reTplHeader)) return true;
-          // Also "...\ntemplate <...>\nT foo..." with no ; after template still incomplete
-          // If overall buffer contains template but no complete decl after it, keep buffering
-          // e.g., "template <typename T>\nT add(T a, T b)" (no ; or { yet)
-          // That string does not match above, but still should be incomplete until body
-          // Detect: after last template, there is no ';' or '{' with body
-          // If t contains template and does not end with ';' '}' and last line is not a complete stmt
-          // Heuristic: if t contains template and last char is not ';' '}' and t does not contain ";"
-          // after template with a following declaration that looks incomplete
-          // For "template <...>\nT foo(...)" without body, treat as incomplete
-          std::string afterTpl = t.substr(posTpl);
-          if (afterTpl.find(';') == std::string::npos && afterTpl.find('{') == std::string::npos) {
-            // No terminator after template at all
-            return true;
-          }
-          // If afterTpl contains a function signature without body: "T foo(...)" without ; or {
-          // Check if afterTpl has '(' but not ';' '{' '}'
-          if (afterTpl.find('(') != std::string::npos && afterTpl.find(';') == std::string::npos && afterTpl.find('{') == std::string::npos) {
-            return true;
-          }
-        }
-      }
-    }
-    // Struct/class/enum header without ; or {
-    {
-      static const std::regex reStruct(R"(.*\b(struct|class|enum)\s+\w+(\s*:\s*[\w:,\s]+)?\s*$)");
-      if (std::regex_match(t, reStruct)) return true;
-    }
-    // Concept / requires at end
-    {
-      static const std::regex reConcept(R"(.*\bconcept\s+\w+\s*=\s*.*)");
-      if (std::regex_search(t, reConcept) && last != ';') return true;
-      if (t.size() >= 8 && t.compare(t.size()-8, 8, "requires")==0) return true;
-      static const std::regex reRequires(R"(.*\brequires\b[^;]*$)");
-      if (std::regex_match(t, reRequires)) {
-        // if requires clause without trailing ; or {
-        return true;
-      }
-    }
-    // if/for/while/switch without body
-    {
-      static const std::regex reCtrl(R"(.*\b(if|for|while|switch)\s*\(.*\)\s*$)");
-      if (std::regex_match(t, reCtrl)) return true;
-    }
-    // Trailing "typename" or "struct" etc.
-    {
-      static const std::regex reTrailingKw(R"(.*\b(template|typename|concept|requires|struct|class|enum|public|private|protected)\s*$)");
-      if (std::regex_match(t, reTrailingKw)) return true;
-    }
-  }
-  return false;
+  return utils::IncompleteDetector::isIncomplete(buffer);
 }
 
 bool Session::handleCommand(const std::string &line, std::string &err) {
