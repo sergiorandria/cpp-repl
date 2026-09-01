@@ -65,6 +65,21 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       std::cout << "[reset]\n";
     return true;
   }
+  if (t == ":clear" || t == ":cls" || t == ":c" || t == "clear" || t == "cls") {
+    // Clear output buffer / terminal screen
+    // ANSI clear screen + move cursor home
+    std::cout << "\033[2J\033[H" << std::flush;
+#ifdef HAS_READLINE
+    if (isatty(STDOUT_FILENO)) {
+      // readline helper to clear screen and redisplay
+      rl_clear_screen(0, 0);
+      rl_on_new_line();
+    }
+#endif
+    // Also clear any partially accumulated multiline buffer
+    buffer_.clear();
+    return true;
+  }
   if (t.rfind(":load", 0) == 0) {
     std::string path = trim(t.substr(5));
     if (path.empty())
