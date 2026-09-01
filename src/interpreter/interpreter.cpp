@@ -149,14 +149,10 @@ static void highPrecisionDump(const clang::Value &V) {
 #endif
   if (getenv("CPP_REPL_NO_COLOR") || getenv("NO_COLOR")) useColor = false;
   if (useColor) {
-    std::string colType = cpprepl::utils::Highlighter::highlightType(typeStr, true);
     std::string colVal = cpprepl::utils::Highlighter::highlightValue(dataStr, true);
-    // Use llvm::outs with ANSI: wrap
-    llvm::outs() << "(\033[36m" << typeStr << "\033[0m) " << colVal << "\n";
-    // Note: colType already contains color, but we use direct for simplicity
-    (void)colType;
+    llvm::outs() << "\033[90m[result]\033[0m (\033[36m" << typeStr << "\033[0m) " << colVal << "\n";
   } else {
-    llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
+    llvm::outs() << "[result] (" << typeStr << ") " << dataStr << "\n";
   }
 }
 } // namespace

@@ -149,12 +149,13 @@ void Session::printTimingLine(bool success, double ms) const {
     const char *grey = "\033[90m";
     const char *green = "\033[32m";
     const char *red = "\033[31m";
+    const char *dim = "\033[2m";
     const char *rst = "\033[0m";
     const char *symCol = success ? green : red;
     const char *sym = success ? "✓" : "✗";
-    std::cout << grey << "⏱  " << t << " " << symCol << sym << grey << rst << "\n";
+    std::cout << grey << "⏱  " << t << " " << symCol << sym << grey << " " << dim << "[runtime]" << rst << "\n";
   } else {
-    std::cout << "⏱  " << t << (success ? " ok" : " err") << "\n";
+    std::cout << "⏱  " << t << (success ? " ok" : " err") << " [runtime]\n";
   }
   std::cout << std::flush;
 }
@@ -180,8 +181,12 @@ void Session::printHighlightedEcho(const std::string &code) const {
   if (preview.empty()) return;
   if (preview.size() > 120) preview = preview.substr(0, 117) + "...";
   std::string highlighted = utils::Highlighter::highlight(preview, true);
-  // Print dim grey arrow + highlighted code after execution
-  std::cout << "\033[90m  \u25B8 \033[0m" << highlighted << "\n" << std::flush;
+  // Print with label [code] for clarity after execution (helps distinguish input echo from errors)
+  if (color) {
+    std::cout << "\033[90m  \u25B8 \033[0m" << highlighted << " \033[2;90m[code]\033[0m\n" << std::flush;
+  } else {
+    std::cout << "  > " << highlighted << " [code]\n" << std::flush;
+  }
 }
 
 bool Session::isIncomplete(const std::string &buffer) const {
@@ -500,10 +505,20 @@ void Session::runInteractive() {
 
   auto printError = [&](const std::string &msg) {
     bool color = shouldUseColor(false);
-    if (color)
-      std::cerr << "\033[31merror:\033[0m " << msg << "\n";
-    else
-      std::cerr << "error: " << msg << "\n";
+    // Ensure we start on a new line (prompt and Clang diagnostics may be on same line)
+    std::cerr << "\n";
+    if (color) {
+      std::cerr << "\033[31m[error]\033[0m " << msg << "\n";
+      // If msg contains hint, highlight it with [fix] label
+      if (msg.find("[hint]") != std::string::npos) {
+        std::cerr << "\033[33m[fix]\033[0m " << "see hint above \u2192 try :undo or :reset, or add missing ';' / header\n";
+      }
+    } else {
+      std::cerr << "[error] " << msg << "\n";
+      if (msg.find("[hint]") != std::string::npos) {
+        std::cerr << "[fix] see hint above -> try :undo or :reset, or add missing ';' / header\n";
+      }
+    }
   };
 
 #ifdef HAS_READLINE
