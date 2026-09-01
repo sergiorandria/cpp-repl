@@ -10,8 +10,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
-set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -fno-exceptions -fno-rtti")
-# LLVM built without exceptions/rtti, keep it simple
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
+# LLVM 22 on Arch is built with -fno-exceptions but RTTI ON (llvm-config --has-rtti=YES, --cxxflags contains -fno-exceptions).
+# We must keep exceptions/RTTI enabled for boost::multiprecision (cpp_int) which needs throw_exception,
+# otherwise JIT fails with Symbols not found: _ZN5boost15throw_exception...
 
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}")
@@ -142,8 +144,9 @@ target_link_libraries(cpp-repl PRIVATE
   ${LLVM_LIBS}
 )
 
-# LLVM 22 is built with -fno-exceptions -fno-rtti, ensure we match
-target_compile_options(cpp-repl PRIVATE -fno-exceptions -fno-rtti)
+# Boost multiprecision requires exceptions/RTTI; LLVM RTTI is ON per LLVMConfig.cmake.
+# Do not force -fno-exceptions/-fno-rtti globally. Keep O0.
+# If needed, LLVM headers still compile fine with exceptions enabled.
 
 # Readline for history / arrow navigation (up/down)
 find_library(READLINE_LIB readline)
