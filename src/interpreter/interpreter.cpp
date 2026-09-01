@@ -263,6 +263,72 @@ bool Interpreter::evalAuto(const std::string &code, std::string &err) {
   return eval(code, err);
 }
 
+static std::string preprocessBigIntLiterals(const std::string &code) {
+  // Handle: bigint g = 4949... (50 digits) -> bigint g = bigint("4949...")
+  // Also cpp_int, mpz_int, mpz, mpq
+  // Any integer literal with 19+ digits (exceeds int64) assigned to bigint-like type
+  // should be wrapped as string constructor to avoid "integer literal is too large"
+  std::string result = code;
+  // Regex for (bigint|cpp_int|mpz_int|mpz|mpq)\s+(\w+)\s*=\s*([0-9]{19,})\s*;
+  // Use ECMA regex and replace
+    // NOTE: regex may throw std::regex_error; with -fno-exceptions we avoid try/catch
+    // and assume pattern is valid (tested). If it throws, it will terminate.
+    std::regex re(R"((\b(?:bigint|cpp_int|mpz_int|mpz|mpq_rational|mpq)\b\s+\w+\s*=\s*)([0-9]{19,})(\s*;))");
+    // Wrap the digits in type("digits")
+    // We need to know the type to wrap correctly: e.g., bigint g = 123 -> bigint g = bigint("123");
+    // So we capture prefix and digits and suffix
+    std::string out;
+    std::sregex_iterator it(result.begin(), result.end(), re);
+    std::sregex_iterator end;
+    size_t lastPos = 0;
+    for (; it != end; ++it) {
+      auto &m = *it;
+      std::string prefix = m[1].str();
+      std::string digits = m[2].str();
+      std::string suffix = m[3].str();
+      // Extract type from prefix (first word)
+      std::string type;
+      {
+        std::istringstream iss(prefix);
+        iss >> type;
+        // type may be like "bigint" or "const bigint" – find last word before variable
+        // For simplicity, find first occurrence of bigint etc. in prefix
+        if (prefix.find("bigint") != std::string::npos) type = "bigint";
+        else if (prefix.find("cpp_int") != std::string::npos) type = "cpp_int";
+        else if (prefix.find("mpz_int") != std::string::npos) type = "mpz_int";
+        else if (prefix.find("mpz") != std::string::npos) type = "mpz";
+        else if (prefix.find("mpq") != std::string::npos) type = "mpq_rational";
+        else type = "bigint";
+      }
+      out.append(result, lastPos, m.position() - lastPos);
+      out += prefix + type + "(\"" + digits + "\")" + suffix;
+      lastPos = m.position() + m.length();
+    }
+    out.append(result, lastPos, std::string::npos);
+    if (lastPos != 0) result = out;
+
+    // Also handle auto g = 4949... where 4949... is large and initializing bigint-like auto
+    // For auto with large literal, wrap as cpp_int("...")
+    std::regex autoRe(R"((\bauto\b\s+\w+\s*=\s*)([0-9]{19,})(\s*;))");
+    out.clear();
+    lastPos = 0;
+    std::sregex_iterator it2(result.begin(), result.end(), autoRe);
+    for (; it2 != end; ++it2) {
+      auto &m = *it2;
+      std::string prefix = m[1].str();
+      std::string digits = m[2].str();
+      std::string suffix = m[3].str();
+      out.append(result, lastPos, m.position() - lastPos);
+      out += prefix + "cpp_int(\"" + digits + "\")" + suffix;
+      lastPos = m.position() + m.length();
+    }
+    if (lastPos != 0) {
+      out.append(result, lastPos, std::string::npos);
+      result = out;
+    }
+  return result;
+}
+
 // --- copied eval logic from legacy Repl (interpreter-like) ---
 static inline std::string trim_copy(const std::string &s) {
   size_t a = s.find_first_not_of(" \t\r\n");
@@ -444,7 +510,8 @@ void Interpreter::trackVariable(const std::string &code) {
 }
 
 bool Interpreter::eval(const std::string &code, std::string &err) {
-  std::string sanitized = sanitizeIncludes(code);
+  std::string preprocessed = preprocessBigIntLiterals(code);
+  std::string sanitized = sanitizeIncludes(preprocessed);
   auto needed = utils::VersionDetector::detect(sanitized);
   if (static_cast<int>(needed) > static_cast<int>(currentVersion_)) {
     std::string vErr;
@@ -859,6 +926,7 @@ void Interpreter::help() const {
                "  :quit  :exit :q exit REPL\n"
                "  :dump           dump accumulated inputs\n"
                "  :reset          reset interpreter state\n"
+               "  :clear :cls :c  clear output buffer / terminal screen\n"
                "  :load <file>    load and execute file\n"
                "  :lib <path>     load dynamic library (absolute or relative)\n"
                "  :I <path>       add include search path (abs/rel, like -I)\n"

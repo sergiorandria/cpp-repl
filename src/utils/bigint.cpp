@@ -9,6 +9,7 @@ const char *BigIntSupport::preamble() {
 using boost::multiprecision::cpp_int;
 using bigint = cpp_int;
 // Python-like big ints: e.g. cpp_int x = cpp_int("123456789012345678901234567890");
+// Large literals like bigint g = 4949... (50 digits) are auto-wrapped to bigint("...")
 )CPP";
 }
 
@@ -17,6 +18,8 @@ const char *BigIntSupport::gmpPreamble() {
 #include <boost/multiprecision/gmp.hpp>
 using boost::multiprecision::mpz_int;
 using boost::multiprecision::mpq_rational;
+using mpz = boost::multiprecision::mpz_int;
+using mpq = boost::multiprecision::mpq_rational;
 )CPP";
 }
 
