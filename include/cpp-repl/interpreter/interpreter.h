@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -132,6 +133,12 @@ public:
   void dump() const;
   /** @brief View current stack layout (variables, history, includes, version). */
   void stackLayout() const;
+  /** @brief View heap layout (virtual addresses, malloc_info, maps). */
+  void heapLayout() const;
+  /** @brief Trace syscalls for a code snippet (uses strace if available). */
+  bool trace(const std::string &code, std::string &output, std::string &err);
+  /** @brief Get virtual address of a symbol (for stack layout). */
+  bool getSymbolAddress(const std::string &name, uintptr_t &addr, std::string &err) const;
   // ── Stack layout modification on the fly (user can edit the stack) ──
   bool stackPop(unsigned n, std::string &err);
   bool stackPush(const std::string &code, std::string &err);

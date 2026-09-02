@@ -25,7 +25,16 @@
 #include <filesystem>
 #include <vector>
 #include <cstring>
-// All colon commands for completion (canonical + aliases)
+#include <unordered_map>
+#include <algorithm>
+#include <cctype>
+// ── zsh-like dynamic completion ─────────────────────────────────────────
+// bash: needs double-Tab to list, only common prefix, no cycling, case-sensitive.
+// zsh:  single-Tab shows all (show-all-if-ambiguous), menu cycles (Tab/Shift-Tab),
+//       colored prefix/stats, case-insensitive, descriptions in list, dynamic
+//       sub-command & filename completion. This implements zsh behaviour via
+//       readline variables/bindings + a rich generator + display hook.
+
 static const std::vector<std::string> kColonCommands = {
   ":help", ":h",
   ":quit", ":exit", ":q",
@@ -39,70 +48,303 @@ static const std::vector<std::string> kColonCommands = {
   ":L", ":libpath",
   ":version",
   ":stack", ":layout", ":view", ":s", ":stacklayout", ":ls", ":info",
+  ":heap", ":trace",
   ":security", ":sandbox",
 };
-// Generator for readline
+
+static const std::unordered_map<std::string, std::string> kCommandDesc = {
+  {":help","show help"}, {":h","show help"},
+  {":quit","exit REPL"}, {":exit","exit REPL"}, {":q","exit REPL"},
+  {":dump","dump history"},
+  {":reset","reset state"}, {":flush","flush stack"}, {":forget","flush stack"},
+  {":clearstack","flush stack"}, {":drop","flush stack"},
+  {":clear","clear screen"}, {":cls","clear screen"}, {":c","clear screen"},
+  {":load","load file"},
+  {":lib","load library"},
+  {":undo","undo last N"},
+  {":I","add include path"}, {":include","add include path"}, {":inc","add include path"},
+  {":L","add lib path"}, {":libpath","add lib path"},
+  {":version","show C++ version"},
+  {":stack","stack ops"}, {":layout","stack layout"}, {":view","view stack"},
+  {":s","view stack"}, {":stacklayout","view stack"}, {":ls","view stack"}, {":info","view stack"},
+  {":heap","heap layout"}, {":trace","trace syscalls"},
+  {":security","sandbox settings"}, {":sandbox","sandbox settings"},
+};
+
+static const std::vector<std::string> kStackSubs = {
+  "pop", "push", "clear", "rm", "drop", "forget", "remove",
+  "set", "swap", "edit", "view", "layout", "flush", "reset",
+};
+
+static const std::vector<std::string> kSecurityKeys = {
+  "allowSystemCalls", "allowFileWrite", "allowNetwork",
+  "maxHistory", "maxCodeSize", "sandboxRoot",
+  "system", "filewrite", "network",
+};
+
+static const std::vector<std::string> kSecurityValues = {
+  "true", "false", "on", "off", "1", "0", "yes", "no",
+};
+
+static inline std::string toLowerCopy(const std::string &s) {
+  std::string r = s;
+  std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c){ return std::tolower(c); });
+  return r;
+}
+
+static inline bool hasPrefixCI(const std::string &str, const std::string &prefix) {
+  if (prefix.size() > str.size()) return false;
+  for (size_t i = 0; i < prefix.size(); ++i) {
+    if (std::tolower((unsigned char)str[i]) != std::tolower((unsigned char)prefix[i])) return false;
+  }
+  return true;
+}
+
+// Generators — case-insensitive prefix match (zsh: completion-ignore-case on)
 static char *colon_command_generator(const char *text, int state) {
-  static size_t idx, len;
-  if (state == 0) { idx = 0; len = strlen(text); }
+  static size_t idx;
+  static std::string lowPrefix;
+  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
   while (idx < kColonCommands.size()) {
     const std::string &cmd = kColonCommands[idx++];
-    if (strncmp(cmd.c_str(), text, len) == 0) {
-      return strdup(cmd.c_str());
-    }
+    if (hasPrefixCI(cmd, lowPrefix)) return strdup(cmd.c_str());
   }
   return nullptr;
 }
-// File-path completion for :load/:I/:L etc. — delegate to readline's filename completion
-static char **colon_completion(const char *text, int start, int end) {
-  (void)end;
-  (void)start;
-  // Only complete if the line starts with ':' (command)
-  // text is the word to complete, start is its offset in rl_line_buffer
-  std::string line = rl_line_buffer ? std::string(rl_line_buffer) : "";
-  std::string word = text ? std::string(text) : "";
-  // Trim leading spaces
-  size_t a = line.find_first_not_of(" \t");
-  std::string trimmed = (a == std::string::npos) ? "" : line.substr(a);
-  if (trimmed.empty() || trimmed[0] != ':') {
-    return nullptr; // not a colon command, use default (no completion for C++ code)
+static char *stack_subcmd_generator(const char *text, int state) {
+  static size_t idx;
+  static std::string lowPrefix;
+  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  while (idx < kStackSubs.size()) {
+    const std::string &s = kStackSubs[idx++];
+    if (hasPrefixCI(s, lowPrefix)) return strdup(s.c_str());
   }
-  // If completing first word (start == 0 or after ':'), complete command names
-  // Check if we are completing the command itself (no space yet, or word starts with ':')
-  bool completingCommand = (word.size() > 0 && word[0] == ':') || (trimmed.find(' ') == std::string::npos);
-  if (completingCommand) {
-    // Ensure word starts with ':' for generator
-    std::string prefix = word;
-    if (prefix.empty() || prefix[0] != ':') {
-      // Happens when text is without ':' due to word break? Try to get prefix from line
-      size_t colon = line.find(':');
-      if (colon != std::string::npos) {
-        size_t sp = line.find(' ', colon);
-        prefix = line.substr(colon, sp == std::string::npos ? std::string::npos : sp - colon);
-        // If text is not empty, it should be suffix of prefix
-        if (!word.empty() && prefix.size() >= word.size() && prefix.substr(prefix.size() - word.size()) == word) {
-          // ok
-        } else {
-          prefix = word;
-          if (!prefix.empty() && prefix[0] != ':') prefix = ":" + prefix;
-        }
-      } else {
-        prefix = ":" + word;
+  return nullptr;
+}
+static char *security_key_generator(const char *text, int state) {
+  static size_t idx;
+  static std::string lowPrefix;
+  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  while (idx < kSecurityKeys.size()) {
+    const std::string &s = kSecurityKeys[idx++];
+    if (hasPrefixCI(s, lowPrefix)) return strdup(s.c_str());
+  }
+  return nullptr;
+}
+static char *security_value_generator(const char *text, int state) {
+  static size_t idx;
+  static std::string lowPrefix;
+  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  while (idx < kSecurityValues.size()) {
+    const std::string &s = kSecurityValues[idx++];
+    if (hasPrefixCI(s, lowPrefix)) return strdup(s.c_str());
+  }
+  return nullptr;
+}
+
+// zsh-like display hook: shows "command -- description" in colour
+static void zsh_display_matches(char **matches, int num_matches, int max_length) {
+  (void)max_length;
+  if (!matches || num_matches <= 0) return;
+  // matches[0] is the common prefix (largest common prefix), matches[1..num_matches] are candidates
+  // We display candidates with optional description, columnized in a zsh style.
+  bool useColor = false;
+#ifndef _WIN32
+  useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+  const char *term = getenv("TERM");
+  if (useColor && term && std::string(term) == "dumb") useColor = false;
+  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE")) useColor = true;
+#endif
+  // Fallback to default display for filename completions (contain '/' or '.')
+  bool looksLikeFile = false;
+  for (int i = 1; i <= num_matches; ++i) {
+    std::string m = matches[i] ? matches[i] : "";
+    if (m.find('/') != std::string::npos || m.find(".so") != std::string::npos || m.find(".cpp") != std::string::npos || m.find(".h") != std::string::npos) {
+      looksLikeFile = true;
+      break;
+    }
+  }
+  if (looksLikeFile) {
+    rl_display_match_list(matches, num_matches, max_length);
+    return;
+  }
+  // Custom zsh-like column display with description
+  // Compute terminal width for column layout (fallback 80)
+  int termWidth = 80;
+#ifdef TIOCGWINSZ
+  // try ioctl if available, otherwise keep 80
+#endif
+  // Simple: one per line if many, else column-like header
+  std::cout << "\n";
+  for (int i = 1; i <= num_matches; ++i) {
+    std::string m = matches[i] ? matches[i] : "";
+    auto it = kCommandDesc.find(m);
+    std::string desc = (it != kCommandDesc.end()) ? it->second : "";
+    // Also handle stack subcommands without ':' prefix
+    if (desc.empty()) {
+      if (std::find(kStackSubs.begin(), kStackSubs.end(), m) != kStackSubs.end()) {
+        if (m == "pop") desc = "pop last N";
+        else if (m == "push") desc = "push code";
+        else if (m == "clear") desc = "clear stack";
+        else if (m == "rm" || m == "drop" || m == "forget" || m == "remove") desc = "remove var";
+        else if (m == "set") desc = "set var code";
+        else if (m == "swap") desc = "swap i j";
+        else if (m == "edit") desc = "edit entry";
+        else desc = "stack op";
+      } else if (std::find(kSecurityKeys.begin(), kSecurityKeys.end(), m) != kSecurityKeys.end()) {
+        desc = "security key";
+      } else if (std::find(kSecurityValues.begin(), kSecurityValues.end(), m) != kSecurityValues.end()) {
+        desc = "bool value";
       }
     }
+    if (useColor) {
+      std::cout << "  \033[36m" << m << "\033[0m";
+      if (!desc.empty()) std::cout << " \033[90m-- " << desc << "\033[0m";
+      std::cout << "\n";
+    } else {
+      std::cout << "  " << m;
+      if (!desc.empty()) std::cout << " -- " << desc;
+      std::cout << "\n";
+    }
+    (void)termWidth;
+  }
+  // Re-display prompt line via readline
+  rl_on_new_line();
+}
+
+// Configure readline for zsh behaviour (call once before first readline)
+static void setup_zsh_completion() {
+  // zsh: show all immediately on ambiguous (no double-Tab like bash)
+  rl_variable_bind("show-all-if-ambiguous", "on");
+  rl_variable_bind("show-all-if-unmodified", "on");
+  // zsh: case-insensitive, colored prefix/stats
+  rl_variable_bind("completion-ignore-case", "on");
+  rl_variable_bind("colored-completion-prefix", "on");
+  rl_variable_bind("colored-stats", "on");
+  // zsh: menu display prefix, skip completed text, mark dirs
+  rl_variable_bind("menu-complete-display-prefix", "on");
+  rl_variable_bind("skip-completed-text", "on");
+  rl_variable_bind("mark-symlinked-directories", "on");
+  // never ask "Display all N possibilities? (y or n)" — zsh shows directly
+  rl_variable_bind("completion-query-items", "0");
+  rl_variable_bind("page-completions", "off");
+  // Tab -> menu-complete (zsh cycles through candidates), Shift-Tab -> menu-complete-backward
+  rl_bind_keyseq("\\C-i", rl_menu_complete);
+  rl_bind_keyseq("\\e[Z", rl_menu_complete); // Shift-Tab often sends ESC [ Z
+  // Display hook for zsh-like annotated list
+  rl_completion_display_matches_hook = zsh_display_matches;
+}
+
+// Rich colon completion — command, sub-command, and file completion
+static char **colon_completion(const char *text, int start, int end) {
+  (void)end;
+  std::string line = rl_line_buffer ? std::string(rl_line_buffer) : "";
+  std::string word = text ? std::string(text) : "";
+  // Only complete if line (after leading ws) starts with ':' (colon command)
+  size_t first = line.find_first_not_of(" \t");
+  if (first == std::string::npos) return nullptr;
+  if (line[first] != ':') return nullptr; // not a colon command -> no completion (C++ code)
+  // Determine if we are completing the first word (command)
+  size_t firstSpace = line.find(' ', first);
+  bool completingCommand = false;
+  if (firstSpace == std::string::npos) {
+    completingCommand = true; // no space yet -> still command
+  } else {
+    completingCommand = (start <= (int)firstSpace);
+  }
+  // Also handle word starting with ':' explicitly
+  if (!word.empty() && word[0] == ':') completingCommand = true;
+  if (completingCommand) {
+    std::string prefix = word;
+    if (prefix.empty()) prefix = ":";
+    else if (prefix[0] != ':') prefix = ":" + prefix;
+    // Strip any trailing content after space in prefix (defensive)
+    size_t sp = prefix.find(' ');
+    if (sp != std::string::npos) prefix = prefix.substr(0, sp);
     char **matches = rl_completion_matches(prefix.c_str(), colon_command_generator);
-    // Don't append space, let readline handle
     rl_completion_append_character = ' ';
+    rl_attempted_completion_over = 1;
     return matches;
   }
-  // Completing argument of :load / :I / :L / :lib — use filename completion
-  std::string cmd = trimmed.substr(0, trimmed.find(' '));
-  if (cmd == ":load" || cmd == ":lib" || cmd == ":I" || cmd == ":include" || cmd == ":inc" || cmd == ":L" || cmd == ":libpath") {
-    // Use readline's filename completion (handles ~, absolute/relative, dirs)
+  // Completing argument — dispatch by command
+  std::string cmdEnd = (firstSpace == std::string::npos) ? "" : line.substr(first, firstSpace - first);
+  // Normalize cmd (trim)
+  cmdEnd.erase(cmdEnd.find_last_not_of(" \t") + 1);
+  // File-path commands
+  if (cmdEnd == ":load" || cmdEnd == ":lib" || cmdEnd == ":I" || cmdEnd == ":include" || cmdEnd == ":inc" || cmdEnd == ":L" || cmdEnd == ":libpath") {
     rl_completion_append_character = ' ';
-    // Temporarily set completion word break to handle paths
+    rl_attempted_completion_over = 1;
     return rl_completion_matches(text, rl_filename_completion_function);
   }
+  // :stack family — complete sub-commands and their args
+  if (cmdEnd == ":stack" || cmdEnd == ":layout" || cmdEnd == ":view" || cmdEnd == ":s" || cmdEnd == ":stacklayout" || cmdEnd == ":ls" || cmdEnd == ":info") {
+    // Count tokens after cmd to decide which level to complete
+    std::string after = (firstSpace == std::string::npos) ? "" : line.substr(firstSpace + 1);
+    // Find cursor-relative token: text is current word, so if word==text and after contains text near end -> second token
+    // Simplistic: if after has no space (or only one token being completed), complete sub-command
+    std::string trimmedAfter = after;
+    size_t la = trimmedAfter.find_first_not_of(" \t");
+    if (la != std::string::npos) trimmedAfter = trimmedAfter.substr(la);
+    else trimmedAfter.clear();
+    size_t secondSpace = trimmedAfter.find(' ');
+    bool completingSecond = (secondSpace == std::string::npos) || (trimmedAfter.size() <= word.size() + 2) || (start <= (int)(firstSpace + 1 + trimmedAfter.find(word)));
+    // Heuristic: if we are still completing the first argument after cmd, do sub-command completion
+    // For cases like ":stack " + Tab or ":stack p" + Tab
+    if (trimmedAfter.empty() || secondSpace == std::string::npos || word == trimmedAfter.substr(0, word.size()) || completingSecond) {
+      // If word matches a prefix of any sub-command, or we are at second position
+      // Check if after contains a second word boundary before cursor: if not, complete sub-command
+      // Use start to infer: if start is after cmd+1 and before second space, then sub-command
+      // For simplicity, if after does not contain a known sub-command fully with trailing space, complete sub-command
+      std::string firstArg = trimmedAfter.substr(0, secondSpace == std::string::npos ? std::string::npos : secondSpace);
+      // If firstArg is a known sub-command and there is a trailing space before cursor, we would be at third arg (skip)
+      bool firstArgIsKnown = std::find(kStackSubs.begin(), kStackSubs.end(), toLowerCopy(firstArg)) != kStackSubs.end();
+      // Determine cursor word start: if we are beyond second token, don't complete sub-command
+      // Check distance from firstSpace to start: if more than one token, we are deeper
+      size_t afterStart = firstSpace == std::string::npos ? std::string::npos : firstSpace + 1;
+      if (afterStart != std::string::npos) {
+        std::string between = line.substr(afterStart, start > (int)afterStart ? start - (int)afterStart : 0);
+        auto spaces = std::count(between.begin(), between.end(), ' ');
+        if (spaces >= 1 && firstArgIsKnown) {
+          // Third+ argument: for rm/drop variants filename/variable completion could be added
+          // No specific completion, let filename handle or return nullptr
+          return nullptr;
+        }
+      }
+      char **m = rl_completion_matches(word.c_str(), stack_subcmd_generator);
+      if (m) { rl_completion_append_character = ' '; rl_attempted_completion_over = 1; return m; }
+    }
+    return nullptr;
+  }
+  // :security / :sandbox — complete keys then values
+  if (cmdEnd == ":security" || cmdEnd == ":sandbox") {
+    std::string after = (firstSpace == std::string::npos) ? "" : line.substr(firstSpace + 1);
+    size_t la = after.find_first_not_of(" \t");
+    if (la != std::string::npos) after = after.substr(la); else after.clear();
+    size_t secondSpace = after.find(' ');
+    // If completing first arg after :security
+    bool atFirstArg = (secondSpace == std::string::npos) || (after.substr(0, secondSpace).size() >= word.size() && hasPrefixCI(after.substr(0, secondSpace), word));
+    // Use start distance heuristic
+    size_t afterStart = firstSpace == std::string::npos ? std::string::npos : firstSpace + 1;
+    if (afterStart != std::string::npos) {
+      std::string between = line.substr(afterStart, start > (int)afterStart ? start - (int)afterStart : 0);
+      auto spaces = std::count(between.begin(), between.end(), ' ');
+      if (spaces == 0) atFirstArg = true;
+      else if (spaces == 1) atFirstArg = false;
+      else atFirstArg = false;
+    }
+    if (atFirstArg) {
+      char **m = rl_completion_matches(word.c_str(), security_key_generator);
+      if (m && m[1]) { rl_completion_append_character = ' '; rl_attempted_completion_over = 1; return m; }
+      // free empty?
+      if (m) { for (int i=0; m[i]; ++i) free(m[i]); free(m); }
+    } else {
+      // completing value (true/false etc.)
+      char **m = rl_completion_matches(word.c_str(), security_value_generator);
+      if (m) { rl_completion_append_character = ' '; rl_attempted_completion_over = 1; return m; }
+    }
+    return nullptr;
+  }
+  // :undo — no completion (numeric)
   return nullptr;
 }
 #endif
@@ -330,6 +572,22 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
   }
   if (t == ":s" || t == ":ls" || t == ":info" || t == ":stacklayout") {
     viewStack();
+    return true;
+  }
+  if (t == ":heap" || t.rfind(":heap", 0) == 0) {
+    interp_.heapLayout();
+    return true;
+  }
+  if (t.rfind(":trace", 0) == 0) {
+    std::string code = trim(t.substr(6));
+    if (code.empty()) { std::cout << "usage: :trace <code>  (e.g. :trace \"int x=42; x+1\" or :trace \"std::cout << \\\"hi\\\";\")\n"; return true; }
+    // Strip surrounding quotes if present
+    if (code.size() >= 2 && ((code.front() == '"' && code.back() == '"') || (code.front() == '\'' && code.back() == '\''))) {
+      code = code.substr(1, code.size()-2);
+    }
+    std::string out, e2;
+    if (!interp_.trace(code, out, e2)) std::cerr << "trace error: " << e2 << "\n";
+    else std::cout << out << "\n";
     return true;
   }
   if (t.rfind(":security", 0) == 0 || t.rfind(":sandbox", 0) == 0) {
@@ -757,9 +1015,9 @@ void Session::runInteractive() {
   if (useReadline) {
     rl_readline_name = const_cast<char*>("cpp-repl");
     using_history();
-    // Auto-completion for colon commands (e.g. :help, :stack, :load)
+    // zsh-like dynamic completion (menu, colored, case-insensitive, single-Tab list)
+    setup_zsh_completion();
     rl_attempted_completion_function = colon_completion;
-    // Use tab for completion, handle : as word break? Keep default
     const char *home = getenv("HOME");
     std::string histFile = home ? std::string(home) + "/.cpp_repl_history" : "";
     if (!histFile.empty()) read_history(histFile.c_str());
