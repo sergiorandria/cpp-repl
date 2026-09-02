@@ -24,6 +24,10 @@
 #include <cstdlib>
 #ifndef _WIN32
 #include <unistd.h>
+#include <sys/resource.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #endif
 
 namespace {
@@ -1375,6 +1379,91 @@ bool Interpreter::stackSwap(size_t i, size_t j, std::string &err) {
       return false;
     }
   }
+  return true;
+}
+bool Interpreter::getSymbolAddress(const std::string &name, uintptr_t &addr, std::string &err) const {
+  if (!initialized_ || !interp_) { err = "REPL not initialized"; return false; }
+  auto sym = interp_->getSymbolAddress(name);
+  if (!sym) {
+    llvm::handleAllErrors(sym.takeError(), [&](llvm::ErrorInfoBase &EIB){ err = EIB.message(); });
+    return false;
+  }
+  // LLVM 22 returns Expected<ExecutorAddr> with getValue() giving uint64_t
+  addr = static_cast<uintptr_t>(sym->getValue());
+  return true;
+}
+void Interpreter::heapLayout() const {
+  bool useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+  const char *term = getenv("TERM");
+  if (useColor && term && std::string(term) == "dumb") useColor = false;
+  auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+  auto rst = col("\033[0m");
+  auto cyan = col("\033[36m");
+  auto grey = col("\033[90m");
+  auto yellow = col("\033[33m");
+  auto green = col("\033[32m");
+  std::cout << cyan << "┌─[heap]─ Heap Layout ────────────────────────" << rst << "\n";
+  void* heapTop = sbrk(0);
+  std::cout << grey << "│ " << rst << "Heap top (sbrk): " << yellow << heapTop << rst << " (" << (uintptr_t)heapTop << ")\n";
+#ifdef __GLIBC__
+  struct mallinfo2 mi = mallinfo2();
+  std::cout << grey << "│ " << rst << "Arena: " << green << mi.arena << rst << " bytes  Ordblks: " << mi.ordblks << "  Hblks: " << mi.hblks << "\n";
+  std::cout << grey << "│ " << rst << "Uordblks (in-use): " << yellow << mi.uordblks << rst << "  Fordblks (free): " << mi.fordblks << "\n";
+  std::cout << grey << "│ " << rst << "Keepcost: " << mi.keepcost << "  Hblkhd: " << mi.hblkhd << "\n";
+#endif
+  struct rusage ru;
+  if (getrusage(RUSAGE_SELF, &ru) == 0) {
+    std::cout << grey << "│ " << rst << "Max RSS: " << green << ru.ru_maxrss << " KB" << rst << "  Minflt: " << ru.ru_minflt << "  Majflt: " << ru.ru_majflt << "\n";
+  }
+  std::ifstream maps("/proc/self/maps");
+  if (maps) {
+    std::cout << grey << "│ " << rst << "Memory maps (first 20):\n";
+    std::string line;
+    int cnt=0;
+    while (std::getline(maps, line) && cnt < 20) {
+      std::cout << grey << "│   " << rst << line << "\n";
+      ++cnt;
+    }
+    if (cnt==20) std::cout << grey << "│   ... (truncated, see /proc/self/maps)" << rst << "\n";
+  } else {
+    std::cout << grey << "│ " << rst << "No /proc/self/maps (non-Linux)\n";
+  }
+  if (initialized_ && interp_) {
+    std::cout << grey << "│ " << rst << "JIT: " << green << "LLJIT (in-process)" << rst << "  History: " << history_.size() << " entries\n";
+  }
+  std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
+}
+bool Interpreter::trace(const std::string &code, std::string &output, std::string &err) {
+  std::string tmpFile = "/tmp/cpp-repl-trace-" + std::to_string(getpid()) + ".cpp";
+  {
+    std::ofstream out(tmpFile);
+    if (!out) { err = "cannot create temp file for trace"; return false; }
+    out << code;
+    if (code.back() != '\n') out << "\n";
+  }
+  if (system("which strace > /dev/null 2>&1") != 0) {
+    err = "strace not found (install strace: sudo apt install strace)";
+    std::remove(tmpFile.c_str());
+    return false;
+  }
+  std::string traceLog = "/tmp/cpp-repl-trace-" + std::to_string(getpid()) + ".log";
+  std::string escCode = code;
+  size_t pos=0;
+  while ((pos = escCode.find('\'', pos)) != std::string::npos) { escCode.replace(pos, 1, "'\\''"); pos+=4; }
+  std::string cmd = "strace -f -e trace=all -o " + traceLog + " -s 256 timeout 5 ./build/cpp-repl --no-interactive -e '" + escCode + "' > /dev/null 2>&1; cat " + traceLog + " 2>/dev/null | head -n 100";
+  FILE *pipe = popen(cmd.c_str(), "r");
+  if (!pipe) { err = "popen failed for strace"; std::remove(tmpFile.c_str()); return false; }
+  char buf[4096];
+  output.clear();
+  while (fgets(buf, sizeof(buf), pipe)) output += buf;
+  pclose(pipe);
+  std::remove(tmpFile.c_str());
+  std::remove(traceLog.c_str());
+  if (output.empty()) {
+    output = "[trace] no syscalls captured (maybe code didn't execute or strace not available)\n";
+    output += "  try: :trace \"int x=42;\" or :trace \"std::cout << \\\"hi\\\";\"\n";
+  }
+  output = "[trace] syscalls for: " + code + "\n" + std::string(40, '-') + "\n" + output;
   return true;
 }
 void Interpreter::setSecurityConfig(const security::SecurityConfig &cfg) {
