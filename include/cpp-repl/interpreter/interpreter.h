@@ -129,6 +129,15 @@ public:
 
   /** @brief Dump history and current version to stdout. */
   void dump() const;
+  /** @brief View current stack layout (variables, history, includes, version). */
+  void stackLayout() const;
+  // ── Stack layout modification on the fly (user can edit the stack) ──
+  bool stackPop(unsigned n, std::string &err);
+  bool stackPush(const std::string &code, std::string &err);
+  bool stackClear(std::string &err);
+  bool stackRemove(const std::string &name, std::string &err);
+  bool stackSet(const std::string &name, const std::string &code, std::string &err);
+  bool stackSwap(size_t i, size_t j, std::string &err);
   /** @brief Reset interpreter state. */
   void reset(std::string &err);
   /** @brief Print help text. */

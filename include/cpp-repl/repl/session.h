@@ -67,6 +67,8 @@ private:
   void printTimingLine(bool success, double ms) const;
   /** @brief Print highlighted echo of executed code (if color enabled). */
   void printHighlightedEcho(const std::string &code) const;
+  /** @brief View current stack layout (prompt, buffer, variables, history). */
+  void viewStack() const;
 
   interpreter::Interpreter &interp_; ///< Bound interpreter instance.
   std::string buffer_; ///< Current multiline buffer.

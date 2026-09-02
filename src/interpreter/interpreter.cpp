@@ -1208,6 +1208,166 @@ void Interpreter::dump() const {
   if (history_.empty())
     std::cout << "(no inputs yet)\n";
 }
+void Interpreter::stackLayout() const {
+  bool useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+  const char *term = getenv("TERM");
+  if (useColor && term && std::string(term) == "dumb") useColor = false;
+  auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+  auto rst = col("\033[0m");
+  auto cyan = col("\033[36m");
+  auto grey = col("\033[90m");
+  auto yellow = col("\033[33m");
+  auto green = col("\033[32m");
+  std::cout << cyan << "┌─[stack]─ Current Layout ─────────────────────" << rst << "\n";
+  std::cout << grey << "│ " << rst << "Version: " << yellow << utils::VersionDetector::toString(currentVersion_) << rst << " (" << grey << utils::VersionDetector::toFlag(currentVersion_) << rst << ")\n";
+  std::cout << grey << "│ " << rst << "History: " << green << history_.size() << rst << " inputs";
+  if (!history_.empty()) std::cout << "  " << grey << "(last: " << history_.back().substr(0, 60) << (history_.back().size()>60?"...":"") << ")" << rst;
+  std::cout << "\n";
+  std::cout << grey << "│ " << rst << "Variables: " << green << variables_.size() << rst << " tracked";
+  if (tracker_) std::cout << " (" << tracker_->size() << " via tracker)";
+  std::cout << "\n";
+  for (auto &kv : variables_) {
+    std::cout << grey << "│   • " << rst << cyan << kv.second.first << rst << " " << yellow << kv.first << rst;
+    if (!kv.second.second.empty()) std::cout << " = " << green << kv.second.second << rst;
+    else std::cout << " " << grey << "[declared]" << rst;
+    std::cout << "\n";
+  }
+  if (variables_.empty()) std::cout << grey << "│   (none)" << rst << "\n";
+  std::cout << grey << "│ " << rst << "Includes: " << (includePaths_.empty() ? grey + "(none)" + rst : "");
+  for (auto &p : includePaths_) std::cout << (includePaths_.size()?"\n"+grey+"│   • "+rst:"") << p;
+  if (!includePaths_.empty()) std::cout << "\n";
+  else std::cout << "\n";
+  std::cout << grey << "│ " << rst << "Library paths: " << (libraryPaths_.empty() ? grey + "(none)" + rst : "");
+  for (auto &p : libraryPaths_) std::cout << (libraryPaths_.size()?"\n"+grey+"│   • "+rst:"") << p;
+  if (!libraryPaths_.empty()) std::cout << "\n";
+  else std::cout << "\n";
+  std::cout << grey << "│ " << rst << "Libraries: " << (libraries_.empty() ? grey + "(none)" + rst : "");
+  for (auto &l : libraries_) std::cout << (libraries_.size()?"\n"+grey+"│   • "+rst:"") << l;
+  if (!libraries_.empty()) std::cout << "\n";
+  else std::cout << "\n";
+  std::cout << grey << "│ " << rst << "Defines: " << (defines_.empty() ? grey + "(none)" + rst : "");
+  for (auto &d : defines_) std::cout << (defines_.size()?"\n"+grey+"│   • "+rst:"") << d;
+  if (!defines_.empty()) std::cout << "\n";
+  else std::cout << "\n";
+  std::cout << grey << "│ " << rst << "StdLib: " << (stdLibIncluded_ ? green + "included (bits/stdc++.h)" + rst : grey + "not yet included" + rst) << "\n";
+  std::cout << grey << "│ " << rst << "BigInt: " << (utils::BigIntSupport::isAvailable() ? green + "yes (boost::multiprecision::cpp_int)" + rst : grey + "no" + rst) << "\n";
+  std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
+}
+bool Interpreter::stackPop(unsigned n, std::string &err) {
+  if (n == 0) n = 1;
+  if (n > history_.size()) n = static_cast<unsigned>(history_.size());
+  if (n == 0) { err = "stack empty"; return false; }
+  return undo(n, err);
+}
+bool Interpreter::stackPush(const std::string &code, std::string &err) {
+  return eval(code, err);
+}
+bool Interpreter::stackClear(std::string &err) {
+  // Clear all history and variables but keep includes/defines/libraries and version
+  std::string local;
+  // Undo all
+  if (!history_.empty()) {
+    unsigned n = static_cast<unsigned>(history_.size());
+    if (auto e = interp_->Undo(n)) {
+      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){ err = EIB.message(); });
+      // Fallback to reset if undo fails
+      reset(err);
+      return err.empty();
+    }
+    history_.clear();
+    variables_.clear();
+    tracker_->clear();
+    varHistory_.clear();
+  } else {
+    variables_.clear();
+    tracker_->clear();
+    varHistory_.clear();
+  }
+  err.clear();
+  return true;
+}
+bool Interpreter::stackRemove(const std::string &name, std::string &err) {
+  auto it = variables_.find(name);
+  if (it == variables_.end()) {
+    // Also check tracker
+    auto found = tracker_->find(name);
+    if (!found) { err = "variable '" + name + "' not found in stack"; return false; }
+  }
+  // Find last history entry that defines this variable and undo from there
+  // For simplicity, find index of last defining entry and rebuild without it
+  int idx = -1;
+  for (int i = (int)history_.size()-1; i >=0; --i) {
+    std::string type, n, v;
+    if (parseDeclaration(history_[i], type, n, v) && n == name) { idx = i; break; }
+    std::string aN, aV;
+    if (parseAssignment(history_[i], aN, aV) && aN == name) { idx = i; break; }
+  }
+  if (idx == -1) {
+    // Variable is tracked but not in history (maybe from preamble) — just forget
+    variables_.erase(name);
+    tracker_->forget(name);
+    return true;
+  }
+  // Rebuild history without idx
+  std::vector<std::string> newHist;
+  for (size_t i=0;i<history_.size();++i) if ((int)i != idx) newHist.push_back(history_[i]);
+  std::string local;
+  interp_.reset();
+  initialized_ = false;
+  history_.clear();
+  variables_.clear();
+  tracker_->clear();
+  varHistory_.clear();
+  stdLibIncluded_ = false;
+  if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
+    err = local;
+    return false;
+  }
+  for (auto &h : newHist) {
+    std::string e;
+    if (!eval(h, e)) {
+      // If replay fails, keep going but report
+      err = e;
+    }
+  }
+  return true;
+}
+bool Interpreter::stackSet(const std::string &name, const std::string &code, std::string &err) {
+  // Set/replace variable: remove old then push new code
+  // code should be a full declaration like "int x = 42;" or "auto x = 42;"
+  std::string dummy;
+  stackRemove(name, dummy); // ignore error if not found
+  return eval(code, err);
+}
+bool Interpreter::stackSwap(size_t i, size_t j, std::string &err) {
+  if (i >= history_.size() || j >= history_.size()) {
+    err = "index out of range (history size " + std::to_string(history_.size()) + ")";
+    return false;
+  }
+  if (i == j) return true;
+  std::vector<std::string> newHist = history_;
+  std::swap(newHist[i], newHist[j]);
+  std::string local;
+  interp_.reset();
+  initialized_ = false;
+  history_.clear();
+  variables_.clear();
+  tracker_->clear();
+  varHistory_.clear();
+  stdLibIncluded_ = false;
+  if (!init(currentVersion_, includePaths_, defines_, libraryPaths_, libraries_, local)) {
+    err = local;
+    return false;
+  }
+  for (auto &h : newHist) {
+    std::string e;
+    if (!eval(h, e)) {
+      err = e;
+      return false;
+    }
+  }
+  return true;
+}
 void Interpreter::reset(std::string &err) {
   std::string local;
   interp_.reset();

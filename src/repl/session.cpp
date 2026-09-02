@@ -190,6 +190,36 @@ void Session::printHighlightedEcho(const std::string &code) const {
   }
 }
 
+void Session::viewStack() const {
+  bool useColor = shouldUseColor(false);
+  auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+  auto rst = col("\033[0m");
+  auto cyan = col("\033[36m");
+  auto grey = col("\033[90m");
+  auto yellow = col("\033[33m");
+  auto green = col("\033[32m");
+  std::cout << cyan << "┌─[stack]─ Session ──────────────────────────" << rst << "\n";
+  std::cout << grey << "│ " << rst << "Prompt: " << yellow << "cpp:" << utils::VersionDetector::toString(interp_.currentVersion()) << rst << " [" << green << promptCount_ << rst << "] ";
+  if (hasLastTiming_) {
+    std::cout << grey << "(" << rst << (lastSuccess_ ? green : "\033[31m") << formatDuration(lastDurationMs_) << (lastSuccess_ ? " ✓" : " ✗") << rst << grey << ")" << rst;
+  }
+  std::cout << "\n";
+  std::cout << grey << "│ " << rst << "Buffer: " << (buffer_.empty() ? grey + "(empty)" + rst : "");
+  if (!buffer_.empty()) {
+    std::string b = buffer_;
+    // collapse newlines for display
+    for (char &c : b) if (c=='\n' || c=='\r') c=' ';
+    if (b.size() > 80) b = b.substr(0, 77) + "...";
+    std::cout << "\n" << grey << "│   " << rst << utils::Highlighter::highlight(b, useColor) << "\n";
+  } else {
+    std::cout << "\n";
+  }
+  std::cout << grey << "│ " << rst << "History: " << green << interp_.historySize() << rst << " entries\n";
+  // Delegate to interpreter for detailed layout
+  interp_.stackLayout();
+  std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
+}
+
 bool Session::isIncomplete(const std::string &buffer) const {
   return utils::IncompleteDetector::isIncomplete(buffer);
 }
@@ -213,6 +243,156 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
   }
   if (t == ":version") {
     std::cout << "Current: " << (int)interp_.currentVersion() << "\n";
+    return true;
+  }
+  if (t == ":s" || t == ":ls" || t == ":info" || t == ":stacklayout") {
+    viewStack();
+    return true;
+  }
+  if (t.rfind(":stack", 0) == 0 || t.rfind(":layout", 0) == 0 || t.rfind(":view", 0) == 0) {
+    std::string args;
+    if (t.rfind(":stack", 0) == 0) args = trim(t.substr(6));
+    else if (t.rfind(":layout", 0) == 0) args = trim(t.substr(7));
+    else if (t.rfind(":view", 0) == 0) args = trim(t.substr(5));
+    else args = "";
+    // No args -> view
+    if (args.empty()) {
+      viewStack();
+      return true;
+    }
+    // Subcommands: pop, push, clear, rm/drop/forget, set, swap, edit
+    if (args.rfind("pop",0)==0) {
+      std::string rest = trim(args.substr(3));
+      unsigned n = 1;
+      if (!rest.empty()) {
+        char *end=nullptr; unsigned long v=strtoul(rest.c_str(), &end, 10);
+        if (end != rest.c_str() && v>0) n=(unsigned)v;
+      }
+      std::string e;
+      if (!interp_.stackPop(n, e)) std::cerr << "stack pop error: " << e << "\n";
+      else {
+        std::cout << "[stack: popped " << n << "]\n";
+        if (promptCount_ > (int)n + 1) promptCount_ -= n; else promptCount_=1;
+        hasLastTiming_=false;
+      }
+      return true;
+    }
+    if (args.rfind("push",0)==0) {
+      std::string code = trim(args.substr(4));
+      if (code.empty()) { std::cout << "usage: :stack push <code>  (e.g. :stack push \"int y=5;\")\n"; return true; }
+      std::string e;
+      if (!interp_.stackPush(code, e)) std::cerr << "stack push error: " << e << "\n";
+      else {
+        std::cout << "[stack: pushed] " << code << "\n";
+        ++promptCount_;
+        hasLastTiming_=false;
+      }
+      return true;
+    }
+    if (args == "clear" || args == "flush" || args == "reset") {
+      std::string e;
+      if (!interp_.stackClear(e)) std::cerr << "stack clear error: " << e << "\n";
+      else {
+        std::cout << "[stack: cleared — all definitions removed]\n";
+        promptCount_=1; hasLastTiming_=false;
+      }
+      return true;
+    }
+    if (args.rfind("rm",0)==0 || args.rfind("drop",0)==0 || args.rfind("forget",0)==0 || args.rfind("remove",0)==0) {
+      std::string name;
+      if (args.rfind("rm",0)==0) name = trim(args.substr(2));
+      else if (args.rfind("drop",0)==0) name = trim(args.substr(4));
+      else if (args.rfind("forget",0)==0) name = trim(args.substr(6));
+      else name = trim(args.substr(6));
+      if (name.empty()) { std::cout << "usage: :stack rm <var>  (remove variable from stack)\n"; return true; }
+      // Only first word is var name
+      size_t sp = name.find(' ');
+      if (sp != std::string::npos) name = trim(name.substr(0, sp));
+      std::string e;
+      if (!interp_.stackRemove(name, e)) std::cerr << "stack rm error: " << e << "\n";
+      else {
+        std::cout << "[stack: removed '" << name << "' — can be redefined now]\n";
+        hasLastTiming_=false;
+      }
+      return true;
+    }
+    if (args.rfind("set",0)==0) {
+      std::string rest = trim(args.substr(3));
+      size_t sp = rest.find(' ');
+      if (sp == std::string::npos) { std::cout << "usage: :stack set <var> <code>  (e.g. :stack set x \"int x = 99;\")\n"; return true; }
+      std::string name = trim(rest.substr(0, sp));
+      std::string code = trim(rest.substr(sp+1));
+      if (name.empty() || code.empty()) { std::cout << "usage: :stack set <var> <code>\n"; return true; }
+      std::string e;
+      if (!interp_.stackSet(name, code, e)) std::cerr << "stack set error: " << e << "\n";
+      else {
+        std::cout << "[stack: set '" << name << "' => " << code << "]\n";
+        hasLastTiming_=false;
+      }
+      return true;
+    }
+    if (args.rfind("swap",0)==0) {
+      std::string rest = trim(args.substr(4));
+      size_t sp = rest.find(' ');
+      if (sp == std::string::npos) { std::cout << "usage: :stack swap <i> <j>  (swap history entries)\n"; return true; }
+      std::string a = trim(rest.substr(0, sp));
+      std::string b = trim(rest.substr(sp+1));
+      char *e1=nullptr, *e2=nullptr;
+      unsigned long ia = strtoul(a.c_str(), &e1, 10);
+      unsigned long ib = strtoul(b.c_str(), &e2, 10);
+      if (e1==a.c_str() || e2==b.c_str()) { std::cout << "usage: :stack swap <i> <j>  (indices from :dump)\n"; return true; }
+      std::string e;
+      if (!interp_.stackSwap((size_t)ia, (size_t)ib, e)) std::cerr << "stack swap error: " << e << "\n";
+      else std::cout << "[stack: swapped " << ia << " <-> " << ib << "]\n";
+      return true;
+    }
+    if (args.rfind("edit",0)==0) {
+      std::string rest = trim(args.substr(4));
+      size_t sp = rest.find(' ');
+      if (sp == std::string::npos) { std::cout << "usage: :stack edit <i> <code>  (replace history entry i)\n"; return true; }
+      std::string idxStr = trim(rest.substr(0, sp));
+      std::string code = trim(rest.substr(sp+1));
+      char *end=nullptr; unsigned long idx = strtoul(idxStr.c_str(), &end, 10);
+      if (end==idxStr.c_str()) { std::cout << "usage: :stack edit <i> <code>\n"; return true; }
+      std::string e;
+      // Remove old at idx and push new at same position via swap logic: pop and insert
+      // For now, do clear and rebuild without idx, then push new at idx position
+      // Simpler: use stackRemove for dummy and then stackPush + swap
+      // Implement as: save history, clear, rebuild
+      std::cout << "[stack edit] replacing [" << idx << "] with: " << code << "\n";
+      // Use stackSet with dummy name extraction? For now, do pop/push cycle
+      // Directly use interpreter's history manipulation via stackPop/swap would be complex,
+      // so we do a full rebuild: get history, replace, clear, replay
+      // For simplicity, use stackSwap after push
+      // We'll just use the underlying interpreter's history via dump and manual
+      // For now, implement as: remove idx, then push code, then swap to position
+      std::string err;
+      // Save current history size
+      size_t sz = interp_.historySize();
+      if (idx >= sz) { std::cerr << "stack edit error: index out of range\n"; return true; }
+      // Remove idx via stackRemove of its variable if possible, otherwise pop and re-push
+      // Simplest: pop from idx to end, then push new, then push rest
+      // We can achieve by: save history vector, clear, replay
+      // For now, just call stackSet with extracted name
+      std::string dummy;
+      // Try to parse code to get name
+      std::string type, name, val;
+      // Use a simple heuristic: code is like "int x = 5;" -> name is x
+      // We can just do stackRemove of old variable at idx (if we can get it) and then stackPush
+      // For now, fallback to stackPop + stackPush
+      std::cout << "  (edit not yet fully implemented — use :stack rm <var> then :stack push <code>)\n";
+      return true;
+    }
+    // Fallback: unknown subcommand -> show stack
+    std::cout << "unknown :stack subcommand: " << args << "\n";
+    std::cout << "  :stack           view layout\n";
+    std::cout << "  :stack pop [n]   pop last n entries\n";
+    std::cout << "  :stack push <code>  push code onto stack\n";
+    std::cout << "  :stack clear     clear all (like :flush)\n";
+    std::cout << "  :stack rm <var>  remove variable\n";
+    std::cout << "  :stack set <var> <code>  replace variable\n";
+    std::cout << "  :stack swap <i> <j>  swap history entries\n";
+    viewStack();
     return true;
   }
   if (t == ":reset" || t == ":flush" || t == ":forget" || t == ":clearstack" || t == ":drop") {
