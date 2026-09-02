@@ -4,43 +4,52 @@
  */
 #include "repl.h"
 
+#include "clang/AST/Type.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Interpreter/Interpreter.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
-#include "clang/AST/Type.h"
+
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <vector>
-#include <limits>
-#include <cmath>
 
 namespace {
 static std::string formatFloatHighPrec(float v) {
   std::string out;
   llvm::raw_string_ostream ss(out);
-  if (std::isnan(v) || std::isinf(v)) ss << llvm::format("%g", v);
-  else if (v == static_cast<float>(static_cast<int64_t>(v))) ss << llvm::format("%.1f", v);
-  else ss << llvm::format("%#.9g", v);
+  if (std::isnan(v) || std::isinf(v))
+    ss << llvm::format("%g", v);
+  else if (v == static_cast<float>(static_cast<int64_t>(v)))
+    ss << llvm::format("%.1f", v);
+  else
+    ss << llvm::format("%#.9g", v);
   ss << 'f';
   return ss.str();
 }
 static std::string formatDoubleHighPrec(double v) {
   std::string out;
   llvm::raw_string_ostream ss(out);
-  if (std::isnan(v) || std::isinf(v)) ss << llvm::format("%g", v);
-  else if (v == static_cast<double>(static_cast<int64_t>(v))) ss << llvm::format("%.1f", v);
-  else ss << llvm::format("%#.17g", v);
+  if (std::isnan(v) || std::isinf(v))
+    ss << llvm::format("%g", v);
+  else if (v == static_cast<double>(static_cast<int64_t>(v)))
+    ss << llvm::format("%.1f", v);
+  else
+    ss << llvm::format("%#.17g", v);
   return ss.str();
 }
 static std::string formatLongDoubleHighPrec(long double v) {
   std::string out;
   llvm::raw_string_ostream ss(out);
-  if (std::isnan(v) || std::isinf(v)) ss << llvm::format("%Lg", v);
-  else if (v == static_cast<long double>(static_cast<int64_t>(v))) ss << llvm::format("%.1Lf", v);
+  if (std::isnan(v) || std::isinf(v))
+    ss << llvm::format("%Lg", v);
+  else if (v == static_cast<long double>(static_cast<int64_t>(v)))
+    ss << llvm::format("%.1Lf", v);
   else {
     constexpr int prec = std::numeric_limits<long double>::max_digits10;
     std::string fmt = "%#." + std::to_string(prec) + "Lg";
@@ -50,31 +59,58 @@ static std::string formatLongDoubleHighPrec(long double v) {
   return ss.str();
 }
 static void highPrecisionDump(const clang::Value &V) {
-  if (!V.isValid() || V.isVoid()) return;
+  if (!V.isValid() || V.isVoid())
+    return;
   std::string typeStr;
-  { llvm::raw_string_ostream ts(typeStr); V.printType(ts); }
+  {
+    llvm::raw_string_ostream ts(typeStr);
+    V.printType(ts);
+  }
   std::string dataStr;
   bool handled = false;
   switch (V.getKind()) {
-  case clang::Value::K_Float: dataStr = formatFloatHighPrec(V.getFloat()); handled = true; break;
-  case clang::Value::K_Double: dataStr = formatDoubleHighPrec(V.getDouble()); handled = true; break;
-  case clang::Value::K_LongDouble: dataStr = formatLongDoubleHighPrec(V.getLongDouble()); handled = true; break;
-  default: break;
+  case clang::Value::K_Float:
+    dataStr = formatFloatHighPrec(V.getFloat());
+    handled = true;
+    break;
+  case clang::Value::K_Double:
+    dataStr = formatDoubleHighPrec(V.getDouble());
+    handled = true;
+    break;
+  case clang::Value::K_LongDouble:
+    dataStr = formatLongDoubleHighPrec(V.getLongDouble());
+    handled = true;
+    break;
+  default:
+    break;
   }
   if (!handled) {
     clang::QualType qt = V.getType();
     clang::QualType nonRef = qt.getNonReferenceType();
     const clang::Type *canon = nonRef.getCanonicalType().getTypePtr();
     if (auto *bt = llvm::dyn_cast<clang::BuiltinType>(canon)) {
-      if ((bt->getKind() == clang::BuiltinType::Float || bt->getKind() == clang::BuiltinType::Double || bt->getKind() == clang::BuiltinType::LongDouble) && V.getKind() == clang::Value::K_PtrOrObj && V.getPtr()) {
+      if ((bt->getKind() == clang::BuiltinType::Float ||
+           bt->getKind() == clang::BuiltinType::Double ||
+           bt->getKind() == clang::BuiltinType::LongDouble) &&
+          V.getKind() == clang::Value::K_PtrOrObj && V.getPtr()) {
         void *p = V.getPtr();
-        if (bt->getKind() == clang::BuiltinType::Float) { dataStr = formatFloatHighPrec(*static_cast<float*>(p)); handled = true; }
-        else if (bt->getKind() == clang::BuiltinType::Double) { dataStr = formatDoubleHighPrec(*static_cast<double*>(p)); handled = true; }
-        else { dataStr = formatLongDoubleHighPrec(*static_cast<long double*>(p)); handled = true; }
+        if (bt->getKind() == clang::BuiltinType::Float) {
+          dataStr = formatFloatHighPrec(*static_cast<float *>(p));
+          handled = true;
+        } else if (bt->getKind() == clang::BuiltinType::Double) {
+          dataStr = formatDoubleHighPrec(*static_cast<double *>(p));
+          handled = true;
+        } else {
+          dataStr = formatLongDoubleHighPrec(*static_cast<long double *>(p));
+          handled = true;
+        }
       }
     }
   }
-  if (!handled) { llvm::raw_string_ostream ds(dataStr); V.printData(ds); }
+  if (!handled) {
+    llvm::raw_string_ostream ds(dataStr);
+    V.printData(ds);
+  }
   llvm::outs() << "(" << typeStr << ") " << dataStr << "\n";
 }
 } // namespace
@@ -101,8 +137,13 @@ bool Repl::init(std::string &err) {
   {
     std::error_code ec;
     if (!std::filesystem::exists(resDir, ec)) {
-      const std::vector<std::string> alt = {"/usr/lib/llvm-22/lib/clang/22", "/usr/lib/clang/22", "/usr/lib/llvm/lib/clang/22"};
-      for (auto &c : alt) if (std::filesystem::exists(c, ec)) { resDir = c; break; }
+      const std::vector<std::string> alt = {"/usr/lib/llvm-22/lib/clang/22", "/usr/lib/clang/22",
+                                            "/usr/lib/llvm/lib/clang/22"};
+      for (auto &c : alt)
+        if (std::filesystem::exists(c, ec)) {
+          resDir = c;
+          break;
+        }
     }
   }
   std::vector<const char *> args = {"-std=c++17", "-O0", "-resource-dir", resDir.c_str()};
@@ -110,16 +151,14 @@ bool Repl::init(std::string &err) {
 
   auto CI = builder.CreateCpp();
   if (!CI) {
-    llvm::handleAllErrors(
-        CI.takeError(), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(CI.takeError(), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
 
   auto interpOrErr = clang::Interpreter::create(std::move(*CI));
   if (!interpOrErr) {
-    llvm::handleAllErrors(
-        interpOrErr.takeError(),
-        [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(interpOrErr.takeError(),
+                          [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   interp_ = std::move(*interpOrErr);
@@ -136,9 +175,8 @@ static inline std::string trim_copy(const std::string &s) {
 }
 static inline std::string rtrim_semi(const std::string &s) {
   std::string t = trim_copy(s);
-  while (!t.empty() &&
-         (t.back() == ';' || t.back() == '\n' || t.back() == '\r' ||
-          t.back() == ' ' || t.back() == '\t')) {
+  while (!t.empty() && (t.back() == ';' || t.back() == '\n' || t.back() == '\r' ||
+                        t.back() == ' ' || t.back() == '\t')) {
     // only strip one trailing ';' and surrounding whitespace for value printing
     if (t.back() == ';') {
       t.pop_back();
@@ -164,16 +202,15 @@ bool Repl::eval(const std::string &code, std::string &err) {
   // This avoids the diagnostic spam of trying then retrying.
   std::string toEval = code;
   bool needsSemi = false;
-  if (!trimmed.empty() && trimmed.back() != ';' && trimmed.back() != '}' &&
-      trimmed.back() != '{' && trimmed[0] != '#') {
+  if (!trimmed.empty() && trimmed.back() != ';' && trimmed.back() != '}' && trimmed.back() != '{' &&
+      trimmed[0] != '#') {
     // decl-like if contains '=' or starts with type keyword
-    bool isDecl =
-        trimmed.find('=') != std::string::npos ||
-        trimmed.rfind("int ", 0) == 0 || trimmed.rfind("auto ", 0) == 0 ||
-        trimmed.rfind("float ", 0) == 0 || trimmed.rfind("double ", 0) == 0 ||
-        trimmed.rfind("char ", 0) == 0 || trimmed.rfind("std::", 0) == 0 ||
-        trimmed.rfind("const ", 0) == 0 || trimmed.rfind("string ", 0) == 0 ||
-        trimmed.rfind("long ", 0) == 0 || trimmed.rfind("unsigned ", 0) == 0;
+    bool isDecl = trimmed.find('=') != std::string::npos || trimmed.rfind("int ", 0) == 0 ||
+                  trimmed.rfind("auto ", 0) == 0 || trimmed.rfind("float ", 0) == 0 ||
+                  trimmed.rfind("double ", 0) == 0 || trimmed.rfind("char ", 0) == 0 ||
+                  trimmed.rfind("std::", 0) == 0 || trimmed.rfind("const ", 0) == 0 ||
+                  trimmed.rfind("string ", 0) == 0 || trimmed.rfind("long ", 0) == 0 ||
+                  trimmed.rfind("unsigned ", 0) == 0;
     if (isDecl) {
       toEval = trimmed + ";\n";
       needsSemi = true;
@@ -184,8 +221,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
   auto e = interp_->ParseAndExecute(toEval, &V);
   if (e) {
     std::string msg;
-    llvm::handleAllErrors(
-        std::move(e), [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
+    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
     // If we pre-added ';' and still failed, try original without it (fallback)
     if (needsSemi) {
       clang::Value V2;
@@ -199,12 +235,12 @@ bool Repl::eval(const std::string &code, std::string &err) {
           history_.push_back(code);
         return true;
       }
-      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
+      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
     }
     // No pre-processing case: try adding ';' as last resort (for other missing
     // semi cases)
-    if (!needsSemi && !trimmed.empty() && trimmed.back() != ';' &&
-        trimmed.back() != '}' && trimmed.back() != '{') {
+    if (!needsSemi && !trimmed.empty() && trimmed.back() != ';' && trimmed.back() != '}' &&
+        trimmed.back() != '{') {
       std::string withSemi = trimmed + ";\n";
       clang::Value V2;
       auto e2 = interp_->ParseAndExecute(withSemi, &V2);
@@ -218,7 +254,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
         return true;
       }
       // fall through to report original error if retry also fails
-      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
+      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
     }
     err = msg;
     return false;
@@ -248,22 +284,17 @@ bool Repl::eval(const std::string &code, std::string &err) {
       // quick filter: don't retry for declarations/controls/includes
       bool likelyExpr = true;
       // if contains declaration keywords, it's not bare expr
-      if (t.find("int ") != std::string::npos ||
-          t.find("auto ") != std::string::npos ||
-          t.find("#include") != std::string::npos || t.find("for") == 0 ||
-          t.find("while") == 0 || t.find("if") == 0 ||
-          t.find("struct ") != std::string::npos ||
-          t.find("class ") != std::string::npos ||
-          t.find("using ") != std::string::npos ||
-          t.find("std::cout") != std::string::npos ||
-          t.find("printf") != std::string::npos) {
+      if (t.find("int ") != std::string::npos || t.find("auto ") != std::string::npos ||
+          t.find("#include") != std::string::npos || t.find("for") == 0 || t.find("while") == 0 ||
+          t.find("if") == 0 || t.find("struct ") != std::string::npos ||
+          t.find("class ") != std::string::npos || t.find("using ") != std::string::npos ||
+          t.find("std::cout") != std::string::npos || t.find("printf") != std::string::npos) {
         likelyExpr = false;
       }
       // also check that after stripping ';' it's a short single expression (no
       // ';' inside)
       std::string stripped = rtrim_semi(code);
-      if (likelyExpr && stripped.find(';') == std::string::npos &&
-          stripped.size() < 200) {
+      if (likelyExpr && stripped.find(';') == std::string::npos && stripped.size() < 200) {
         clang::Value V2;
         auto e2 = interp_->ParseAndExecute(stripped, &V2);
         if (!e2 && V2.isValid()) {
@@ -279,8 +310,7 @@ bool Repl::eval(const std::string &code, std::string &err) {
           // But Interpreter::Undo is expensive; for now just print second value
           // and keep both.
         } else if (e2) {
-          llvm::handleAllErrors(std::move(e2),
-                                [&](llvm::ErrorInfoBase &EIB) {});
+          llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
         }
       }
     }
@@ -334,8 +364,7 @@ bool Repl::loadLibrary(const std::string &path, std::string &err) {
     return false;
   }
   if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
-    llvm::handleAllErrors(
-        std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   return true;
@@ -347,8 +376,7 @@ bool Repl::undo(unsigned n, std::string &err) {
     return false;
   }
   if (auto e = interp_->Undo(n)) {
-    llvm::handleAllErrors(
-        std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   // Also pop from history

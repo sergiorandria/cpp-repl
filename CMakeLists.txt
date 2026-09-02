@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(cpp-repl VERSION 0.3.0 LANGUAGES C CXX)
 
 # ── Language & standards ────────────────────────────────────────────────
-set(CMAKE_CXX_STANDARD 17)
+# AGENTS.md §1 — target C++20 by default (C++23 only when explicitly opted in)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -127,9 +128,9 @@ target_compile_definitions(cpp-repl-core
     CLANG_RESOURCE_DIR="${CLANG_RESOURCE_DIR}"
     CPP_REPL_INCLUDE_DIR="${PROJECT_SOURCE_DIR}/include"
 )
-target_compile_features(cpp-repl-core PUBLIC cxx_std_17)
+target_compile_features(cpp-repl-core PUBLIC cxx_std_20)
 target_compile_options(cpp-repl-core PRIVATE
-  $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wpedantic -Wshadow -Wconversion>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror>
 )
 if(ENABLE_CLANG_TIDY)
   find_program(CLANG_TIDY_EXE NAMES clang-tidy clang-tidy-22)
@@ -176,7 +177,7 @@ endif()
 # ── Executable (thin wrapper) ───────────────────────────────────────────
 add_executable(cpp-repl src/main.cpp)
 target_link_libraries(cpp-repl PRIVATE cpp-repl-core)
-target_compile_features(cpp-repl PRIVATE cxx_std_17)
+target_compile_features(cpp-repl PRIVATE cxx_std_20)
 if(UNIX)
   target_link_options(cpp-repl PRIVATE -rdynamic)
 endif()

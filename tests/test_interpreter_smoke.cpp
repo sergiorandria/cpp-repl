@@ -1,6 +1,7 @@
-#include <gtest/gtest.h>
 #include "cpp-repl/interpreter/interpreter.h"
 #include "cpp-repl/utils/version_detector.h"
+
+#include <gtest/gtest.h>
 
 using cpprepl::interpreter::Interpreter;
 using cpprepl::utils::StdVersion;

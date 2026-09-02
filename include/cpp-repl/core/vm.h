@@ -1,8 +1,9 @@
 #pragma once
-#include <memory>
-#include <string>
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/IR/Module.h"
+
+#include <memory>
+#include <string>
 
 namespace cpprepl {
 namespace core {
@@ -36,8 +37,7 @@ public:
    * @param err Output error message on failure.
    * @return true on success.
    */
-  virtual bool addModule(std::unique_ptr<llvm::Module> M,
-                         std::unique_ptr<llvm::LLVMContext> Ctx,
+  virtual bool addModule(std::unique_ptr<llvm::Module> M, std::unique_ptr<llvm::LLVMContext> Ctx,
                          std::string &err) = 0;
 
   /**
@@ -67,11 +67,12 @@ public:
   LLJITVM &operator=(const LLJITVM &) = delete;
 
   bool init(std::string &err) override;
-  bool addModule(std::unique_ptr<llvm::Module> M,
-                 std::unique_ptr<llvm::LLVMContext> Ctx,
+  bool addModule(std::unique_ptr<llvm::Module> M, std::unique_ptr<llvm::LLVMContext> Ctx,
                  std::string &err) override;
   llvm::Expected<llvm::orc::ExecutorAddr> lookup(const std::string &name) override;
-  llvm::orc::LLJIT *getLLJIT() override { return jit_.get(); }
+  llvm::orc::LLJIT *getLLJIT() override {
+    return jit_.get();
+  }
 
 private:
   std::unique_ptr<llvm::orc::LLJIT> jit_;

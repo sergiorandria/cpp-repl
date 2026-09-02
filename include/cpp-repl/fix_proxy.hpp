@@ -20,36 +20,38 @@
 
 // Now patch ProxyBase to add convert_to with SFINAE
 namespace np {
-  // Add convert_to to ProxyBase for any T that has convert_to
-  template <typename T, bool IsConst, std::size_t MaxDims>
-  class ProxyBase;
+// Add convert_to to ProxyBase for any T that has convert_to
+template <typename T, bool IsConst, std::size_t MaxDims> class ProxyBase;
 
-  // Specialization to add convert_to
-  // We use a helper to detect if T has convert_to
-  namespace detail {
-    template <typename T, typename U, typename = void>
-    struct has_convert_to : std::false_type {};
-    template <typename T, typename U>
-    struct has_convert_to<T, U, std::void_t<decltype(std::declval<T>().template convert_to<U>())>> : std::true_type {};
-  }
+// Specialization to add convert_to
+// We use a helper to detect if T has convert_to
+namespace detail {
+template <typename T, typename U, typename = void> struct has_convert_to : std::false_type {};
+template <typename T, typename U>
+struct has_convert_to<T, U, std::void_t<decltype(std::declval<T>().template convert_to<U>())>>
+    : std::true_type {};
+} // namespace detail
 
-  // Patch ProxyBase: add convert_to method via inheritance or via a free function
-  // We will define a free function that handles ProxyBase convert_to
-  template <typename T, bool IsConst, std::size_t MaxDims, typename U>
-  inline auto proxy_convert_to(const ProxyBase<T, IsConst, MaxDims>& p) -> decltype(std::declval<T>().template convert_to<U>()) {
-    return static_cast<T>(p).template convert_to<U>();
-  }
+// Patch ProxyBase: add convert_to method via inheritance or via a free function
+// We will define a free function that handles ProxyBase convert_to
+template <typename T, bool IsConst, std::size_t MaxDims, typename U>
+inline auto proxy_convert_to(const ProxyBase<T, IsConst, MaxDims> &p)
+    -> decltype(std::declval<T>().template convert_to<U>()) {
+  return static_cast<T>(p).template convert_to<U>();
 }
+} // namespace np
 
 // For ap * a[n] where a[n] is ProxyBase, we already have operator* in the fix
 // But we need to make it work for any T, not just bigint
 namespace np {
-  template <typename T, bool IsConst, std::size_t MaxDims>
-  inline auto operator*(const T& lhs, const ProxyBase<T, IsConst, MaxDims>& rhs) -> decltype(lhs * std::declval<T>()) {
-    return lhs * static_cast<T>(rhs);
-  }
-  template <typename T, bool IsConst, std::size_t MaxDims>
-  inline auto operator*(const ProxyBase<T, IsConst, MaxDims>& lhs, const T& rhs) -> decltype(std::declval<T>() * rhs) {
-    return static_cast<T>(lhs) * rhs;
-  }
+template <typename T, bool IsConst, std::size_t MaxDims>
+inline auto operator*(const T &lhs, const ProxyBase<T, IsConst, MaxDims> &rhs)
+    -> decltype(lhs * std::declval<T>()) {
+  return lhs * static_cast<T>(rhs);
 }
+template <typename T, bool IsConst, std::size_t MaxDims>
+inline auto operator*(const ProxyBase<T, IsConst, MaxDims> &lhs, const T &rhs)
+    -> decltype(std::declval<T>() * rhs) {
+  return static_cast<T>(lhs) * rhs;
+}
+} // namespace np

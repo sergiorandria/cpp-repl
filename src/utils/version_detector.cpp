@@ -3,6 +3,7 @@
  * @brief Detects required C++ standard from source keywords.
  */
 #include "cpp-repl/utils/version_detector.h"
+
 #include <algorithm>
 
 namespace cpprepl {
@@ -11,8 +12,8 @@ namespace utils {
 static std::string stripCommentsAndStrings(const std::string &code) {
   std::string out;
   out.reserve(code.size());
-  bool inLineComment = false, inBlockComment = false, inString = false,
-       inChar = false, escape = false;
+  bool inLineComment = false, inBlockComment = false, inString = false, inChar = false,
+       escape = false;
   for (size_t i = 0; i < code.size(); ++i) {
     char c = code[i];
     char nxt = (i + 1 < code.size()) ? code[i + 1] : '\0';
@@ -72,16 +73,14 @@ static std::string stripCommentsAndStrings(const std::string &code) {
 bool VersionDetector::contains(const std::string &code, const std::string &kw) {
   return code.find(kw) != std::string::npos;
 }
-bool VersionDetector::containsWord(const std::string &code,
-                                   const std::string &word) {
+bool VersionDetector::containsWord(const std::string &code, const std::string &word) {
   // naive word boundary check
   size_t pos = 0;
   while ((pos = code.find(word, pos)) != std::string::npos) {
-    bool leftOk = pos == 0 || (!std::isalnum((unsigned char)code[pos - 1]) &&
-                               code[pos - 1] != '_');
-    bool rightOk = pos + word.size() == code.size() ||
-                   (!std::isalnum((unsigned char)code[pos + word.size()]) &&
-                    code[pos + word.size()] != '_');
+    bool leftOk = pos == 0 || (!std::isalnum((unsigned char)code[pos - 1]) && code[pos - 1] != '_');
+    bool rightOk =
+        pos + word.size() == code.size() ||
+        (!std::isalnum((unsigned char)code[pos + word.size()]) && code[pos + word.size()] != '_');
     if (leftOk && rightOk)
       return true;
     pos += word.size();
@@ -102,15 +101,11 @@ StdVersion VersionDetector::detect(const std::string &code) {
   }
   // C++20 keywords (including headers that require C++20)
   if (containsWord(stripped, "concept") || containsWord(stripped, "requires") ||
-      containsWord(stripped, "co_await") ||
-      containsWord(stripped, "co_yield") ||
-      containsWord(stripped, "co_return") ||
-      containsWord(stripped, "char8_t") || contains(stripped, "<=>") ||
-      containsWord(stripped, "consteval") ||
-      containsWord(stripped, "constinit") ||
-      containsWord(stripped, "source_location") ||
-      containsWord(stripped, "format") ||
-      contains(stripped, "std::format") ||
+      containsWord(stripped, "co_await") || containsWord(stripped, "co_yield") ||
+      containsWord(stripped, "co_return") || containsWord(stripped, "char8_t") ||
+      contains(stripped, "<=>") || containsWord(stripped, "consteval") ||
+      containsWord(stripped, "constinit") || containsWord(stripped, "source_location") ||
+      containsWord(stripped, "format") || contains(stripped, "std::format") ||
       contains(stripped, "std::source_location")) {
     return StdVersion::Cpp20;
   }

@@ -13,17 +13,21 @@ struct SecurityConfig {
   bool allowNetwork = false;     // socket, connect
   bool allowRawPointers = true;  // FILE*, raw new/delete
   size_t maxHistory = 1000;
-  size_t maxCodeSize = 100000; // 100KB per input
-  std::vector<std::string> allowedIncludes; // empty = allow all (within sandbox root)
+  size_t maxCodeSize = 100000;               // 100KB per input
+  std::vector<std::string> allowedIncludes;  // empty = allow all (within sandbox root)
   std::vector<std::string> allowedLibraries; // empty = allow all
-  std::string sandboxRoot = ""; // e.g. "/tmp/cpp-repl-sandbox", empty = no chroot
+  std::string sandboxRoot = "";              // e.g. "/tmp/cpp-repl-sandbox", empty = no chroot
 };
 
 class Sandbox {
 public:
   explicit Sandbox(SecurityConfig cfg = SecurityConfig{}) : cfg_(std::move(cfg)) {}
-  void setConfig(SecurityConfig cfg) { cfg_ = std::move(cfg); }
-  const SecurityConfig& config() const { return cfg_; }
+  void setConfig(SecurityConfig cfg) {
+    cfg_ = std::move(cfg);
+  }
+  const SecurityConfig &config() const {
+    return cfg_;
+  }
 
   // Returns empty string if allowed, otherwise error message with [security] label
   std::string check(const std::string &code) const;

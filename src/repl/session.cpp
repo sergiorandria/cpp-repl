@@ -3,31 +3,33 @@
  * @brief Interactive session loop and command handling.
  */
 #include "cpp-repl/repl/session.h"
+
 #include "cpp-repl/utils/highlight.h"
 #include "cpp-repl/utils/incomplete_detector.h"
 #include "cpp-repl/utils/version_detector.h"
+
 #include <chrono>
-#include <regex>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <string>
-#include <cstdlib>
 #ifdef _WIN32
-#include <windows.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
 #ifdef HAS_READLINE
-#include <readline/readline.h>
-#include <readline/history.h>
-#include <filesystem>
-#include <vector>
-#include <cstring>
-#include <unordered_map>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <filesystem>
+#include <readline/history.h>
+#include <readline/readline.h>
+#include <unordered_map>
+#include <vector>
 // ── zsh-like dynamic completion ─────────────────────────────────────────
 // bash: needs double-Tab to list, only common prefix, no cycling, case-sensitive.
 // zsh:  single-Tab shows all (show-all-if-ambiguous), menu cycles (Tab/Shift-Tab),
@@ -36,66 +38,76 @@
 //       readline variables/bindings + a rich generator + display hook.
 
 static const std::vector<std::string> kColonCommands = {
-  ":help", ":h",
-  ":quit", ":exit", ":q",
-  ":dump",
-  ":reset", ":flush", ":forget", ":clearstack", ":drop",
-  ":clear", ":cls", ":c",
-  ":load",
-  ":lib",
-  ":undo",
-  ":I", ":include", ":inc",
-  ":L", ":libpath",
-  ":version",
-  ":stack", ":layout", ":view", ":s", ":stacklayout", ":ls", ":info",
-  ":heap", ":trace",
-  ":security", ":sandbox",
+    ":help",    ":h",       ":quit",       ":exit",   ":q",        ":dump",    ":reset",
+    ":flush",   ":forget",  ":clearstack", ":drop",   ":clear",    ":cls",     ":c",
+    ":load",    ":lib",     ":undo",       ":I",      ":include",  ":inc",     ":L",
+    ":libpath", ":version", ":stack",      ":layout", ":view",     ":s",       ":stacklayout",
+    ":ls",      ":info",    ":heap",       ":trace",  ":security", ":sandbox",
 };
 
 static const std::unordered_map<std::string, std::string> kCommandDesc = {
-  {":help","show help"}, {":h","show help"},
-  {":quit","exit REPL"}, {":exit","exit REPL"}, {":q","exit REPL"},
-  {":dump","dump history"},
-  {":reset","reset state"}, {":flush","flush stack"}, {":forget","flush stack"},
-  {":clearstack","flush stack"}, {":drop","flush stack"},
-  {":clear","clear screen"}, {":cls","clear screen"}, {":c","clear screen"},
-  {":load","load file"},
-  {":lib","load library"},
-  {":undo","undo last N"},
-  {":I","add include path"}, {":include","add include path"}, {":inc","add include path"},
-  {":L","add lib path"}, {":libpath","add lib path"},
-  {":version","show C++ version"},
-  {":stack","stack ops"}, {":layout","stack layout"}, {":view","view stack"},
-  {":s","view stack"}, {":stacklayout","view stack"}, {":ls","view stack"}, {":info","view stack"},
-  {":heap","heap layout"}, {":trace","trace syscalls"},
-  {":security","sandbox settings"}, {":sandbox","sandbox settings"},
+    {":help", "show help"},
+    {":h", "show help"},
+    {":quit", "exit REPL"},
+    {":exit", "exit REPL"},
+    {":q", "exit REPL"},
+    {":dump", "dump history"},
+    {":reset", "reset state"},
+    {":flush", "flush stack"},
+    {":forget", "flush stack"},
+    {":clearstack", "flush stack"},
+    {":drop", "flush stack"},
+    {":clear", "clear screen"},
+    {":cls", "clear screen"},
+    {":c", "clear screen"},
+    {":load", "load file"},
+    {":lib", "load library"},
+    {":undo", "undo last N"},
+    {":I", "add include path"},
+    {":include", "add include path"},
+    {":inc", "add include path"},
+    {":L", "add lib path"},
+    {":libpath", "add lib path"},
+    {":version", "show C++ version"},
+    {":stack", "stack ops"},
+    {":layout", "stack layout"},
+    {":view", "view stack"},
+    {":s", "view stack"},
+    {":stacklayout", "view stack"},
+    {":ls", "view stack"},
+    {":info", "view stack"},
+    {":heap", "heap layout"},
+    {":trace", "trace syscalls"},
+    {":security", "sandbox settings"},
+    {":sandbox", "sandbox settings"},
 };
 
 static const std::vector<std::string> kStackSubs = {
-  "pop", "push", "clear", "rm", "drop", "forget", "remove",
-  "set", "swap", "edit", "view", "layout", "flush", "reset",
+    "pop", "push", "clear", "rm",   "drop",   "forget", "remove",
+    "set", "swap", "edit",  "view", "layout", "flush",  "reset",
 };
 
 static const std::vector<std::string> kSecurityKeys = {
-  "allowSystemCalls", "allowFileWrite", "allowNetwork",
-  "maxHistory", "maxCodeSize", "sandboxRoot",
-  "system", "filewrite", "network",
+    "allowSystemCalls", "allowFileWrite", "allowNetwork", "maxHistory", "maxCodeSize",
+    "sandboxRoot",      "system",         "filewrite",    "network",
 };
 
 static const std::vector<std::string> kSecurityValues = {
-  "true", "false", "on", "off", "1", "0", "yes", "no",
+    "true", "false", "on", "off", "1", "0", "yes", "no",
 };
 
 static inline std::string toLowerCopy(const std::string &s) {
   std::string r = s;
-  std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c){ return std::tolower(c); });
+  std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) { return std::tolower(c); });
   return r;
 }
 
 static inline bool hasPrefixCI(const std::string &str, const std::string &prefix) {
-  if (prefix.size() > str.size()) return false;
+  if (prefix.size() > str.size())
+    return false;
   for (size_t i = 0; i < prefix.size(); ++i) {
-    if (std::tolower((unsigned char)str[i]) != std::tolower((unsigned char)prefix[i])) return false;
+    if (std::tolower((unsigned char)str[i]) != std::tolower((unsigned char)prefix[i]))
+      return false;
   }
   return true;
 }
@@ -104,40 +116,56 @@ static inline bool hasPrefixCI(const std::string &str, const std::string &prefix
 static char *colon_command_generator(const char *text, int state) {
   static size_t idx;
   static std::string lowPrefix;
-  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  if (state == 0) {
+    idx = 0;
+    lowPrefix = toLowerCopy(text ? text : "");
+  }
   while (idx < kColonCommands.size()) {
     const std::string &cmd = kColonCommands[idx++];
-    if (hasPrefixCI(cmd, lowPrefix)) return strdup(cmd.c_str());
+    if (hasPrefixCI(cmd, lowPrefix))
+      return strdup(cmd.c_str());
   }
   return nullptr;
 }
 static char *stack_subcmd_generator(const char *text, int state) {
   static size_t idx;
   static std::string lowPrefix;
-  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  if (state == 0) {
+    idx = 0;
+    lowPrefix = toLowerCopy(text ? text : "");
+  }
   while (idx < kStackSubs.size()) {
     const std::string &s = kStackSubs[idx++];
-    if (hasPrefixCI(s, lowPrefix)) return strdup(s.c_str());
+    if (hasPrefixCI(s, lowPrefix))
+      return strdup(s.c_str());
   }
   return nullptr;
 }
 static char *security_key_generator(const char *text, int state) {
   static size_t idx;
   static std::string lowPrefix;
-  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  if (state == 0) {
+    idx = 0;
+    lowPrefix = toLowerCopy(text ? text : "");
+  }
   while (idx < kSecurityKeys.size()) {
     const std::string &s = kSecurityKeys[idx++];
-    if (hasPrefixCI(s, lowPrefix)) return strdup(s.c_str());
+    if (hasPrefixCI(s, lowPrefix))
+      return strdup(s.c_str());
   }
   return nullptr;
 }
 static char *security_value_generator(const char *text, int state) {
   static size_t idx;
   static std::string lowPrefix;
-  if (state == 0) { idx = 0; lowPrefix = toLowerCopy(text ? text : ""); }
+  if (state == 0) {
+    idx = 0;
+    lowPrefix = toLowerCopy(text ? text : "");
+  }
   while (idx < kSecurityValues.size()) {
     const std::string &s = kSecurityValues[idx++];
-    if (hasPrefixCI(s, lowPrefix)) return strdup(s.c_str());
+    if (hasPrefixCI(s, lowPrefix))
+      return strdup(s.c_str());
   }
   return nullptr;
 }
@@ -145,21 +173,25 @@ static char *security_value_generator(const char *text, int state) {
 // zsh-like display hook: shows "command -- description" in colour
 static void zsh_display_matches(char **matches, int num_matches, int max_length) {
   (void)max_length;
-  if (!matches || num_matches <= 0) return;
+  if (!matches || num_matches <= 0)
+    return;
   // matches[0] is the common prefix (largest common prefix), matches[1..num_matches] are candidates
   // We display candidates with optional description, columnized in a zsh style.
   bool useColor = false;
 #ifndef _WIN32
   useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
   const char *term = getenv("TERM");
-  if (useColor && term && std::string(term) == "dumb") useColor = false;
-  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE")) useColor = true;
+  if (useColor && term && std::string(term) == "dumb")
+    useColor = false;
+  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE"))
+    useColor = true;
 #endif
   // Fallback to default display for filename completions (contain '/' or '.')
   bool looksLikeFile = false;
   for (int i = 1; i <= num_matches; ++i) {
     std::string m = matches[i] ? matches[i] : "";
-    if (m.find('/') != std::string::npos || m.find(".so") != std::string::npos || m.find(".cpp") != std::string::npos || m.find(".h") != std::string::npos) {
+    if (m.find('/') != std::string::npos || m.find(".so") != std::string::npos ||
+        m.find(".cpp") != std::string::npos || m.find(".h") != std::string::npos) {
       looksLikeFile = true;
       break;
     }
@@ -183,27 +215,38 @@ static void zsh_display_matches(char **matches, int num_matches, int max_length)
     // Also handle stack subcommands without ':' prefix
     if (desc.empty()) {
       if (std::find(kStackSubs.begin(), kStackSubs.end(), m) != kStackSubs.end()) {
-        if (m == "pop") desc = "pop last N";
-        else if (m == "push") desc = "push code";
-        else if (m == "clear") desc = "clear stack";
-        else if (m == "rm" || m == "drop" || m == "forget" || m == "remove") desc = "remove var";
-        else if (m == "set") desc = "set var code";
-        else if (m == "swap") desc = "swap i j";
-        else if (m == "edit") desc = "edit entry";
-        else desc = "stack op";
+        if (m == "pop")
+          desc = "pop last N";
+        else if (m == "push")
+          desc = "push code";
+        else if (m == "clear")
+          desc = "clear stack";
+        else if (m == "rm" || m == "drop" || m == "forget" || m == "remove")
+          desc = "remove var";
+        else if (m == "set")
+          desc = "set var code";
+        else if (m == "swap")
+          desc = "swap i j";
+        else if (m == "edit")
+          desc = "edit entry";
+        else
+          desc = "stack op";
       } else if (std::find(kSecurityKeys.begin(), kSecurityKeys.end(), m) != kSecurityKeys.end()) {
         desc = "security key";
-      } else if (std::find(kSecurityValues.begin(), kSecurityValues.end(), m) != kSecurityValues.end()) {
+      } else if (std::find(kSecurityValues.begin(), kSecurityValues.end(), m) !=
+                 kSecurityValues.end()) {
         desc = "bool value";
       }
     }
     if (useColor) {
       std::cout << "  \033[36m" << m << "\033[0m";
-      if (!desc.empty()) std::cout << " \033[90m-- " << desc << "\033[0m";
+      if (!desc.empty())
+        std::cout << " \033[90m-- " << desc << "\033[0m";
       std::cout << "\n";
     } else {
       std::cout << "  " << m;
-      if (!desc.empty()) std::cout << " -- " << desc;
+      if (!desc.empty())
+        std::cout << " -- " << desc;
       std::cout << "\n";
     }
     (void)termWidth;
@@ -242,67 +285,88 @@ static char **colon_completion(const char *text, int start, int end) {
   std::string word = text ? std::string(text) : "";
   // Only complete if line (after leading ws) starts with ':' (colon command)
   size_t first = line.find_first_not_of(" \t");
-  if (first == std::string::npos) return nullptr;
-  if (line[first] != ':') return nullptr; // not a colon command -> no completion (C++ code)
+  if (first == std::string::npos)
+    return nullptr;
+  if (line[first] != ':')
+    return nullptr; // not a colon command -> no completion (C++ code)
   // Determine if we are completing the first word (command)
   size_t firstSpace = line.find(' ', first);
   bool completingCommand = false;
   if (firstSpace == std::string::npos) {
     completingCommand = true; // no space yet -> still command
   } else {
-    completingCommand = (start <= (int)firstSpace);
+    completingCommand = (start <= static_cast<int>(firstSpace));
   }
   // Also handle word starting with ':' explicitly
-  if (!word.empty() && word[0] == ':') completingCommand = true;
+  if (!word.empty() && word[0] == ':')
+    completingCommand = true;
   if (completingCommand) {
     std::string prefix = word;
-    if (prefix.empty()) prefix = ":";
-    else if (prefix[0] != ':') prefix = ":" + prefix;
+    if (prefix.empty())
+      prefix = ":";
+    else if (prefix[0] != ':')
+      prefix = ":" + prefix;
     // Strip any trailing content after space in prefix (defensive)
     size_t sp = prefix.find(' ');
-    if (sp != std::string::npos) prefix = prefix.substr(0, sp);
+    if (sp != std::string::npos)
+      prefix = prefix.substr(0, sp);
     char **matches = rl_completion_matches(prefix.c_str(), colon_command_generator);
     rl_completion_append_character = ' ';
     rl_attempted_completion_over = 1;
     return matches;
   }
   // Completing argument — dispatch by command
-  std::string cmdEnd = (firstSpace == std::string::npos) ? "" : line.substr(first, firstSpace - first);
+  std::string cmdEnd =
+      (firstSpace == std::string::npos) ? "" : line.substr(first, firstSpace - first);
   // Normalize cmd (trim)
   cmdEnd.erase(cmdEnd.find_last_not_of(" \t") + 1);
   // File-path commands
-  if (cmdEnd == ":load" || cmdEnd == ":lib" || cmdEnd == ":I" || cmdEnd == ":include" || cmdEnd == ":inc" || cmdEnd == ":L" || cmdEnd == ":libpath") {
+  if (cmdEnd == ":load" || cmdEnd == ":lib" || cmdEnd == ":I" || cmdEnd == ":include" ||
+      cmdEnd == ":inc" || cmdEnd == ":L" || cmdEnd == ":libpath") {
     rl_completion_append_character = ' ';
     rl_attempted_completion_over = 1;
     return rl_completion_matches(text, rl_filename_completion_function);
   }
   // :stack family — complete sub-commands and their args
-  if (cmdEnd == ":stack" || cmdEnd == ":layout" || cmdEnd == ":view" || cmdEnd == ":s" || cmdEnd == ":stacklayout" || cmdEnd == ":ls" || cmdEnd == ":info") {
+  if (cmdEnd == ":stack" || cmdEnd == ":layout" || cmdEnd == ":view" || cmdEnd == ":s" ||
+      cmdEnd == ":stacklayout" || cmdEnd == ":ls" || cmdEnd == ":info") {
     // Count tokens after cmd to decide which level to complete
     std::string after = (firstSpace == std::string::npos) ? "" : line.substr(firstSpace + 1);
-    // Find cursor-relative token: text is current word, so if word==text and after contains text near end -> second token
-    // Simplistic: if after has no space (or only one token being completed), complete sub-command
+    // Find cursor-relative token: text is current word, so if word==text and after contains text
+    // near end -> second token Simplistic: if after has no space (or only one token being
+    // completed), complete sub-command
     std::string trimmedAfter = after;
     size_t la = trimmedAfter.find_first_not_of(" \t");
-    if (la != std::string::npos) trimmedAfter = trimmedAfter.substr(la);
-    else trimmedAfter.clear();
+    if (la != std::string::npos)
+      trimmedAfter = trimmedAfter.substr(la);
+    else
+      trimmedAfter.clear();
     size_t secondSpace = trimmedAfter.find(' ');
-    bool completingSecond = (secondSpace == std::string::npos) || (trimmedAfter.size() <= word.size() + 2) || (start <= (int)(firstSpace + 1 + trimmedAfter.find(word)));
+    bool completingSecond = (secondSpace == std::string::npos) ||
+                            (trimmedAfter.size() <= word.size() + 2) ||
+                            (start <= static_cast<int>(firstSpace + 1 + trimmedAfter.find(word)));
     // Heuristic: if we are still completing the first argument after cmd, do sub-command completion
     // For cases like ":stack " + Tab or ":stack p" + Tab
-    if (trimmedAfter.empty() || secondSpace == std::string::npos || word == trimmedAfter.substr(0, word.size()) || completingSecond) {
+    if (trimmedAfter.empty() || secondSpace == std::string::npos ||
+        word == trimmedAfter.substr(0, word.size()) || completingSecond) {
       // If word matches a prefix of any sub-command, or we are at second position
       // Check if after contains a second word boundary before cursor: if not, complete sub-command
       // Use start to infer: if start is after cmd+1 and before second space, then sub-command
-      // For simplicity, if after does not contain a known sub-command fully with trailing space, complete sub-command
-      std::string firstArg = trimmedAfter.substr(0, secondSpace == std::string::npos ? std::string::npos : secondSpace);
-      // If firstArg is a known sub-command and there is a trailing space before cursor, we would be at third arg (skip)
-      bool firstArgIsKnown = std::find(kStackSubs.begin(), kStackSubs.end(), toLowerCopy(firstArg)) != kStackSubs.end();
+      // For simplicity, if after does not contain a known sub-command fully with trailing space,
+      // complete sub-command
+      std::string firstArg = trimmedAfter.substr(
+          0, secondSpace == std::string::npos ? std::string::npos : secondSpace);
+      // If firstArg is a known sub-command and there is a trailing space before cursor, we would be
+      // at third arg (skip)
+      bool firstArgIsKnown = std::find(kStackSubs.begin(), kStackSubs.end(),
+                                       toLowerCopy(firstArg)) != kStackSubs.end();
       // Determine cursor word start: if we are beyond second token, don't complete sub-command
       // Check distance from firstSpace to start: if more than one token, we are deeper
       size_t afterStart = firstSpace == std::string::npos ? std::string::npos : firstSpace + 1;
       if (afterStart != std::string::npos) {
-        std::string between = line.substr(afterStart, start > (int)afterStart ? start - (int)afterStart : 0);
+        std::string between = line.substr(afterStart, start > static_cast<int>(afterStart)
+                                                          ? start - static_cast<int>(afterStart)
+                                                          : 0);
         auto spaces = std::count(between.begin(), between.end(), ' ');
         if (spaces >= 1 && firstArgIsKnown) {
           // Third+ argument: for rm/drop variants filename/variable completion could be added
@@ -311,7 +375,11 @@ static char **colon_completion(const char *text, int start, int end) {
         }
       }
       char **m = rl_completion_matches(word.c_str(), stack_subcmd_generator);
-      if (m) { rl_completion_append_character = ' '; rl_attempted_completion_over = 1; return m; }
+      if (m) {
+        rl_completion_append_character = ' ';
+        rl_attempted_completion_over = 1;
+        return m;
+      }
     }
     return nullptr;
   }
@@ -319,28 +387,50 @@ static char **colon_completion(const char *text, int start, int end) {
   if (cmdEnd == ":security" || cmdEnd == ":sandbox") {
     std::string after = (firstSpace == std::string::npos) ? "" : line.substr(firstSpace + 1);
     size_t la = after.find_first_not_of(" \t");
-    if (la != std::string::npos) after = after.substr(la); else after.clear();
+    if (la != std::string::npos)
+      after = after.substr(la);
+    else
+      after.clear();
     size_t secondSpace = after.find(' ');
     // If completing first arg after :security
-    bool atFirstArg = (secondSpace == std::string::npos) || (after.substr(0, secondSpace).size() >= word.size() && hasPrefixCI(after.substr(0, secondSpace), word));
+    bool atFirstArg =
+        (secondSpace == std::string::npos) || (after.substr(0, secondSpace).size() >= word.size() &&
+                                               hasPrefixCI(after.substr(0, secondSpace), word));
     // Use start distance heuristic
     size_t afterStart = firstSpace == std::string::npos ? std::string::npos : firstSpace + 1;
     if (afterStart != std::string::npos) {
-      std::string between = line.substr(afterStart, start > (int)afterStart ? start - (int)afterStart : 0);
+      std::string between = line.substr(afterStart, start > static_cast<int>(afterStart)
+                                                        ? start - static_cast<int>(afterStart)
+                                                        : 0);
       auto spaces = std::count(between.begin(), between.end(), ' ');
-      if (spaces == 0) atFirstArg = true;
-      else if (spaces == 1) atFirstArg = false;
-      else atFirstArg = false;
+      if (spaces == 0)
+        atFirstArg = true;
+      else if (spaces == 1)
+        atFirstArg = false;
+      else
+        atFirstArg = false;
     }
     if (atFirstArg) {
       char **m = rl_completion_matches(word.c_str(), security_key_generator);
-      if (m && m[1]) { rl_completion_append_character = ' '; rl_attempted_completion_over = 1; return m; }
+      if (m && m[1]) {
+        rl_completion_append_character = ' ';
+        rl_attempted_completion_over = 1;
+        return m;
+      }
       // free empty?
-      if (m) { for (int i=0; m[i]; ++i) free(m[i]); free(m); }
+      if (m) {
+        for (int i = 0; m[i]; ++i)
+          free(m[i]);
+        free(m);
+      }
     } else {
       // completing value (true/false etc.)
       char **m = rl_completion_matches(word.c_str(), security_value_generator);
-      if (m) { rl_completion_append_character = ' '; rl_attempted_completion_over = 1; return m; }
+      if (m) {
+        rl_completion_append_character = ' ';
+        rl_attempted_completion_over = 1;
+        return m;
+      }
     }
     return nullptr;
   }
@@ -367,8 +457,7 @@ bool Session::exec(const std::string &code, std::string &err) {
 
 // ── Prompt helpers ──────────────────────────────────────────────────────────
 bool Session::shouldUseColor(bool /*forReadline*/) const {
-  if (std::getenv("NO_COLOR") || std::getenv("CPP_REPL_NO_COLOR") ||
-      std::getenv("NO_COLOUR"))
+  if (std::getenv("NO_COLOR") || std::getenv("CPP_REPL_NO_COLOR") || std::getenv("NO_COLOUR"))
     return false;
   if (std::getenv("FORCE_COLOR") || std::getenv("CLICOLOR_FORCE"))
     return true;
@@ -403,8 +492,10 @@ std::string Session::formatDuration(double ms) const {
 std::string Session::buildPrimaryPrompt(bool forReadline) const {
   bool color = shouldUseColor(forReadline);
   auto wrap = [&](const char *code) -> std::string {
-    if (!color) return "";
-    if (forReadline) return std::string("\001") + code + "\002";
+    if (!color)
+      return "";
+    if (forReadline)
+      return std::string("\001") + code + "\002";
     return std::string(code);
   };
   const std::string RST = wrap("\033[0m");
@@ -449,8 +540,10 @@ std::string Session::buildPrimaryPrompt(bool forReadline) const {
 std::string Session::buildContinuationPrompt(bool forReadline) const {
   bool color = shouldUseColor(forReadline);
   auto wrap = [&](const char *code) -> std::string {
-    if (!color) return "";
-    if (forReadline) return std::string("\001") + code + "\002";
+    if (!color)
+      return "";
+    if (forReadline)
+      return std::string("\001") + code + "\002";
     return std::string(code);
   };
   const std::string RST = wrap("\033[0m");
@@ -468,7 +561,8 @@ void Session::printTimingLine(bool success, double ms) const {
 #else
   bool isTTY = isatty(STDOUT_FILENO) != 0;
 #endif
-  if (!isTTY) return;
+  if (!isTTY)
+    return;
   bool color = shouldUseColor(false);
   std::string t = formatDuration(ms);
   if (color) {
@@ -479,7 +573,8 @@ void Session::printTimingLine(bool success, double ms) const {
     const char *rst = "\033[0m";
     const char *symCol = success ? green : red;
     const char *sym = success ? "✓" : "✗";
-    std::cout << grey << "⏱  " << t << " " << symCol << sym << grey << " " << dim << "[runtime]" << rst << "\n";
+    std::cout << grey << "⏱  " << t << " " << symCol << sym << grey << " " << dim << "[runtime]"
+              << rst << "\n";
   } else {
     std::cout << "⏱  " << t << (success ? " ok" : " err") << " [runtime]\n";
   }
@@ -492,24 +587,34 @@ void Session::printHighlightedEcho(const std::string &code) const {
 #else
   bool isTTY = isatty(STDOUT_FILENO) != 0;
 #endif
-  if (!isTTY) return;
+  if (!isTTY)
+    return;
   bool color = shouldUseColor(false);
-  if (!color) return;
+  if (!color)
+    return;
   // Trim and limit to single-line preview (80 cols) for non-intrusive echo
   std::string preview = code;
   // Remove trailing newlines/spaces
-  while (!preview.empty() && (preview.back()=='\n' || preview.back()=='\r' || preview.back()==' ' || preview.back()=='\t')) preview.pop_back();
+  while (!preview.empty() && (preview.back() == '\n' || preview.back() == '\r' ||
+                              preview.back() == ' ' || preview.back() == '\t'))
+    preview.pop_back();
   // Collapse internal newlines to " ⏎ " for preview
-  for (char &c : preview) if (c=='\n' || c=='\r') c=' ';
+  for (char &c : preview)
+    if (c == '\n' || c == '\r')
+      c = ' ';
   // Trim leading spaces
   size_t s = preview.find_first_not_of(" \t");
-  if (s!=std::string::npos) preview = preview.substr(s);
-  if (preview.empty()) return;
-  if (preview.size() > 120) preview = preview.substr(0, 117) + "...";
+  if (s != std::string::npos)
+    preview = preview.substr(s);
+  if (preview.empty())
+    return;
+  if (preview.size() > 120)
+    preview = preview.substr(0, 117) + "...";
   std::string highlighted = utils::Highlighter::highlight(preview, true);
   // Print with label [code] for clarity after execution (helps distinguish input echo from errors)
   if (color) {
-    std::cout << "\033[90m  \u25B8 \033[0m" << highlighted << " \033[2;90m[code]\033[0m\n" << std::flush;
+    std::cout << "\033[90m  \u25B8 \033[0m" << highlighted << " \033[2;90m[code]\033[0m\n"
+              << std::flush;
   } else {
     std::cout << "  > " << highlighted << " [code]\n" << std::flush;
   }
@@ -517,29 +622,38 @@ void Session::printHighlightedEcho(const std::string &code) const {
 
 void Session::viewStack() const {
   bool useColor = shouldUseColor(false);
-  auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+  auto col = [&](const char *c) { return useColor ? std::string(c) : std::string(""); };
   auto rst = col("\033[0m");
   auto cyan = col("\033[36m");
   auto grey = col("\033[90m");
   auto yellow = col("\033[33m");
   auto green = col("\033[32m");
   std::cout << cyan << "┌─[stack]─ Session ──────────────────────────" << rst << "\n";
-  std::cout << grey << "│ " << rst << "Prompt: " << yellow << "cpp:" << utils::VersionDetector::toString(interp_.currentVersion()) << rst << " [" << green << promptCount_ << rst << "] ";
+  std::cout << grey << "│ " << rst << "Prompt: " << yellow
+            << "cpp:" << utils::VersionDetector::toString(interp_.currentVersion()) << rst << " ["
+            << green << promptCount_ << rst << "] ";
   if (hasLastTiming_) {
-    std::cout << grey << "(" << rst << (lastSuccess_ ? green : "\033[31m") << formatDuration(lastDurationMs_) << (lastSuccess_ ? " ✓" : " ✗") << rst << grey << ")" << rst;
+    std::cout << grey << "(" << rst << (lastSuccess_ ? green : "\033[31m")
+              << formatDuration(lastDurationMs_) << (lastSuccess_ ? " ✓" : " ✗") << rst << grey
+              << ")" << rst;
   }
   std::cout << "\n";
   std::cout << grey << "│ " << rst << "Buffer: " << (buffer_.empty() ? grey + "(empty)" + rst : "");
   if (!buffer_.empty()) {
     std::string b = buffer_;
     // collapse newlines for display
-    for (char &c : b) if (c=='\n' || c=='\r') c=' ';
-    if (b.size() > 80) b = b.substr(0, 77) + "...";
-    std::cout << "\n" << grey << "│   " << rst << utils::Highlighter::highlight(b, useColor) << "\n";
+    for (char &c : b)
+      if (c == '\n' || c == '\r')
+        c = ' ';
+    if (b.size() > 80)
+      b = b.substr(0, 77) + "...";
+    std::cout << "\n"
+              << grey << "│   " << rst << utils::Highlighter::highlight(b, useColor) << "\n";
   } else {
     std::cout << "\n";
   }
-  std::cout << grey << "│ " << rst << "History: " << green << interp_.historySize() << rst << " entries\n";
+  std::cout << grey << "│ " << rst << "History: " << green << interp_.historySize() << rst
+            << " entries\n";
   // Delegate to interpreter for detailed layout
   interp_.stackLayout();
   std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
@@ -567,7 +681,7 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     return true;
   }
   if (t == ":version") {
-    std::cout << "Current: " << (int)interp_.currentVersion() << "\n";
+    std::cout << "Current: " << static_cast<int>(interp_.currentVersion()) << "\n";
     return true;
   }
   if (t == ":s" || t == ":ls" || t == ":info" || t == ":stacklayout") {
@@ -580,24 +694,33 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
   }
   if (t.rfind(":trace", 0) == 0) {
     std::string code = trim(t.substr(6));
-    if (code.empty()) { std::cout << "usage: :trace <code>  (e.g. :trace \"int x=42; x+1\" or :trace \"std::cout << \\\"hi\\\";\")\n"; return true; }
+    if (code.empty()) {
+      std::cout << "usage: :trace <code>  (e.g. :trace \"int x=42; x+1\" or :trace \"std::cout << "
+                   "\\\"hi\\\";\")\n";
+      return true;
+    }
     // Strip surrounding quotes if present
-    if (code.size() >= 2 && ((code.front() == '"' && code.back() == '"') || (code.front() == '\'' && code.back() == '\''))) {
-      code = code.substr(1, code.size()-2);
+    if (code.size() >= 2 && ((code.front() == '"' && code.back() == '"') ||
+                             (code.front() == '\'' && code.back() == '\''))) {
+      code = code.substr(1, code.size() - 2);
     }
     std::string out, e2;
-    if (!interp_.trace(code, out, e2)) std::cerr << "trace error: " << e2 << "\n";
-    else std::cout << out << "\n";
+    if (!interp_.trace(code, out, e2))
+      std::cerr << "trace error: " << e2 << "\n";
+    else
+      std::cout << out << "\n";
     return true;
   }
   if (t.rfind(":security", 0) == 0 || t.rfind(":sandbox", 0) == 0) {
     std::string args = "";
-    if (t.rfind(":security", 0) == 0) args = trim(t.substr(9));
-    else args = trim(t.substr(8));
+    if (t.rfind(":security", 0) == 0)
+      args = trim(t.substr(9));
+    else
+      args = trim(t.substr(8));
     auto cfg = interp_.securityConfig();
     if (args.empty()) {
       bool useColor = shouldUseColor(false);
-      auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+      auto col = [&](const char *c) { return useColor ? std::string(c) : std::string(""); };
       auto rst = col("\033[0m");
       auto cyan = col("\033[36m");
       auto grey = col("\033[90m");
@@ -605,12 +728,23 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       auto green = col("\033[32m");
       auto red = col("\033[31m");
       std::cout << cyan << "┌─[security]─ Sandbox ───────────────────────" << rst << "\n";
-      std::cout << grey << "│ " << rst << "allowSystemCalls: " << (cfg.allowSystemCalls ? green + "true" + rst : red + "false" + rst) << grey << " (system/popen/fork/exec)" << rst << "\n";
-      std::cout << grey << "│ " << rst << "allowFileWrite:   " << (cfg.allowFileWrite ? green + "true" + rst : red + "false" + rst) << grey << " (unlink/remove/fopen w)" << rst << "\n";
-      std::cout << grey << "│ " << rst << "allowNetwork:     " << (cfg.allowNetwork ? green + "true" + rst : red + "false" + rst) << grey << " (socket/connect)" << rst << "\n";
-      std::cout << grey << "│ " << rst << "maxHistory:       " << yellow << cfg.maxHistory << rst << "\n";
-      std::cout << grey << "│ " << rst << "maxCodeSize:      " << yellow << cfg.maxCodeSize << rst << "\n";
-      std::cout << grey << "│ " << rst << "sandboxRoot:      " << (cfg.sandboxRoot.empty() ? grey + "(none)" + rst : yellow + cfg.sandboxRoot + rst) << "\n";
+      std::cout << grey << "│ " << rst << "allowSystemCalls: "
+                << (cfg.allowSystemCalls ? green + "true" + rst : red + "false" + rst) << grey
+                << " (system/popen/fork/exec)" << rst << "\n";
+      std::cout << grey << "│ " << rst << "allowFileWrite:   "
+                << (cfg.allowFileWrite ? green + "true" + rst : red + "false" + rst) << grey
+                << " (unlink/remove/fopen w)" << rst << "\n";
+      std::cout << grey << "│ " << rst << "allowNetwork:     "
+                << (cfg.allowNetwork ? green + "true" + rst : red + "false" + rst) << grey
+                << " (socket/connect)" << rst << "\n";
+      std::cout << grey << "│ " << rst << "maxHistory:       " << yellow << cfg.maxHistory << rst
+                << "\n";
+      std::cout << grey << "│ " << rst << "maxCodeSize:      " << yellow << cfg.maxCodeSize << rst
+                << "\n";
+      std::cout << grey << "│ " << rst << "sandboxRoot:      "
+                << (cfg.sandboxRoot.empty() ? grey + "(none)" + rst
+                                            : yellow + cfg.sandboxRoot + rst)
+                << "\n";
       std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
       std::cout << grey << "  usage: :security allowSystemCalls true|false\n";
       std::cout << "         :security allowFileWrite true|false\n";
@@ -621,12 +755,12 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     std::string key, val;
     if (eqPos != std::string::npos) {
       key = trim(args.substr(0, eqPos));
-      val = trim(args.substr(eqPos+1));
+      val = trim(args.substr(eqPos + 1));
     } else {
       size_t sp = args.find(' ');
       if (sp != std::string::npos) {
         key = trim(args.substr(0, sp));
-        val = trim(args.substr(sp+1));
+        val = trim(args.substr(sp + 1));
       } else {
         key = args;
         val = "";
@@ -636,21 +770,30 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     std::transform(lowVal.begin(), lowVal.end(), lowVal.begin(), ::tolower);
     bool boolVal = (lowVal == "true" || lowVal == "1" || lowVal == "on" || lowVal == "yes");
     if (key == "allowSystemCalls" || key == "system") {
-      if (val.empty()) { std::cout << "allowSystemCalls = " << (cfg.allowSystemCalls ? "true" : "false") << "\n"; return true; }
+      if (val.empty()) {
+        std::cout << "allowSystemCalls = " << (cfg.allowSystemCalls ? "true" : "false") << "\n";
+        return true;
+      }
       cfg.allowSystemCalls = boolVal;
       interp_.setSecurityConfig(cfg);
       std::cout << "[security] allowSystemCalls = " << (boolVal ? "true" : "false") << "\n";
       return true;
     }
     if (key == "allowFileWrite" || key == "filewrite") {
-      if (val.empty()) { std::cout << "allowFileWrite = " << (cfg.allowFileWrite ? "true" : "false") << "\n"; return true; }
+      if (val.empty()) {
+        std::cout << "allowFileWrite = " << (cfg.allowFileWrite ? "true" : "false") << "\n";
+        return true;
+      }
       cfg.allowFileWrite = boolVal;
       interp_.setSecurityConfig(cfg);
       std::cout << "[security] allowFileWrite = " << (boolVal ? "true" : "false") << "\n";
       return true;
     }
     if (key == "allowNetwork" || key == "network") {
-      if (val.empty()) { std::cout << "allowNetwork = " << (cfg.allowNetwork ? "true" : "false") << "\n"; return true; }
+      if (val.empty()) {
+        std::cout << "allowNetwork = " << (cfg.allowNetwork ? "true" : "false") << "\n";
+        return true;
+      }
       cfg.allowNetwork = boolVal;
       interp_.setSecurityConfig(cfg);
       std::cout << "[security] allowNetwork = " << (boolVal ? "true" : "false") << "\n";
@@ -661,109 +804,157 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
   }
   if (t.rfind(":stack", 0) == 0 || t.rfind(":layout", 0) == 0 || t.rfind(":view", 0) == 0) {
     std::string args;
-    if (t.rfind(":stack", 0) == 0) args = trim(t.substr(6));
-    else if (t.rfind(":layout", 0) == 0) args = trim(t.substr(7));
-    else if (t.rfind(":view", 0) == 0) args = trim(t.substr(5));
-    else args = "";
+    if (t.rfind(":stack", 0) == 0)
+      args = trim(t.substr(6));
+    else if (t.rfind(":layout", 0) == 0)
+      args = trim(t.substr(7));
+    else if (t.rfind(":view", 0) == 0)
+      args = trim(t.substr(5));
+    else
+      args = "";
     // No args -> view
     if (args.empty()) {
       viewStack();
       return true;
     }
     // Subcommands: pop, push, clear, rm/drop/forget, set, swap, edit
-    if (args.rfind("pop",0)==0) {
+    if (args.rfind("pop", 0) == 0) {
       std::string rest = trim(args.substr(3));
       unsigned n = 1;
       if (!rest.empty()) {
-        char *end=nullptr; unsigned long v=strtoul(rest.c_str(), &end, 10);
-        if (end != rest.c_str() && v>0) n=(unsigned)v;
+        char *end = nullptr;
+        unsigned long v = strtoul(rest.c_str(), &end, 10);
+        if (end != rest.c_str() && v > 0)
+          n = (unsigned)v;
       }
       std::string e;
-      if (!interp_.stackPop(n, e)) std::cerr << "stack pop error: " << e << "\n";
+      if (!interp_.stackPop(n, e))
+        std::cerr << "stack pop error: " << e << "\n";
       else {
         std::cout << "[stack: popped " << n << "]\n";
-        if (promptCount_ > (int)n + 1) promptCount_ -= n; else promptCount_=1;
-        hasLastTiming_=false;
+        if (promptCount_ > static_cast<int>(n) + 1)
+          promptCount_ -= n;
+        else
+          promptCount_ = 1;
+        hasLastTiming_ = false;
       }
       return true;
     }
-    if (args.rfind("push",0)==0) {
+    if (args.rfind("push", 0) == 0) {
       std::string code = trim(args.substr(4));
-      if (code.empty()) { std::cout << "usage: :stack push <code>  (e.g. :stack push \"int y=5;\")\n"; return true; }
+      if (code.empty()) {
+        std::cout << "usage: :stack push <code>  (e.g. :stack push \"int y=5;\")\n";
+        return true;
+      }
       std::string e;
-      if (!interp_.stackPush(code, e)) std::cerr << "stack push error: " << e << "\n";
+      if (!interp_.stackPush(code, e))
+        std::cerr << "stack push error: " << e << "\n";
       else {
         std::cout << "[stack: pushed] " << code << "\n";
         ++promptCount_;
-        hasLastTiming_=false;
+        hasLastTiming_ = false;
       }
       return true;
     }
     if (args == "clear" || args == "flush" || args == "reset") {
       std::string e;
-      if (!interp_.stackClear(e)) std::cerr << "stack clear error: " << e << "\n";
+      if (!interp_.stackClear(e))
+        std::cerr << "stack clear error: " << e << "\n";
       else {
         std::cout << "[stack: cleared — all definitions removed]\n";
-        promptCount_=1; hasLastTiming_=false;
+        promptCount_ = 1;
+        hasLastTiming_ = false;
       }
       return true;
     }
-    if (args.rfind("rm",0)==0 || args.rfind("drop",0)==0 || args.rfind("forget",0)==0 || args.rfind("remove",0)==0) {
+    if (args.rfind("rm", 0) == 0 || args.rfind("drop", 0) == 0 || args.rfind("forget", 0) == 0 ||
+        args.rfind("remove", 0) == 0) {
       std::string name;
-      if (args.rfind("rm",0)==0) name = trim(args.substr(2));
-      else if (args.rfind("drop",0)==0) name = trim(args.substr(4));
-      else if (args.rfind("forget",0)==0) name = trim(args.substr(6));
-      else name = trim(args.substr(6));
-      if (name.empty()) { std::cout << "usage: :stack rm <var>  (remove variable from stack)\n"; return true; }
+      if (args.rfind("rm", 0) == 0)
+        name = trim(args.substr(2));
+      else if (args.rfind("drop", 0) == 0)
+        name = trim(args.substr(4));
+      else if (args.rfind("forget", 0) == 0)
+        name = trim(args.substr(6));
+      else
+        name = trim(args.substr(6));
+      if (name.empty()) {
+        std::cout << "usage: :stack rm <var>  (remove variable from stack)\n";
+        return true;
+      }
       // Only first word is var name
       size_t sp = name.find(' ');
-      if (sp != std::string::npos) name = trim(name.substr(0, sp));
+      if (sp != std::string::npos)
+        name = trim(name.substr(0, sp));
       std::string e;
-      if (!interp_.stackRemove(name, e)) std::cerr << "stack rm error: " << e << "\n";
+      if (!interp_.stackRemove(name, e))
+        std::cerr << "stack rm error: " << e << "\n";
       else {
         std::cout << "[stack: removed '" << name << "' — can be redefined now]\n";
-        hasLastTiming_=false;
+        hasLastTiming_ = false;
       }
       return true;
     }
-    if (args.rfind("set",0)==0) {
+    if (args.rfind("set", 0) == 0) {
       std::string rest = trim(args.substr(3));
       size_t sp = rest.find(' ');
-      if (sp == std::string::npos) { std::cout << "usage: :stack set <var> <code>  (e.g. :stack set x \"int x = 99;\")\n"; return true; }
+      if (sp == std::string::npos) {
+        std::cout << "usage: :stack set <var> <code>  (e.g. :stack set x \"int x = 99;\")\n";
+        return true;
+      }
       std::string name = trim(rest.substr(0, sp));
-      std::string code = trim(rest.substr(sp+1));
-      if (name.empty() || code.empty()) { std::cout << "usage: :stack set <var> <code>\n"; return true; }
+      std::string code = trim(rest.substr(sp + 1));
+      if (name.empty() || code.empty()) {
+        std::cout << "usage: :stack set <var> <code>\n";
+        return true;
+      }
       std::string e;
-      if (!interp_.stackSet(name, code, e)) std::cerr << "stack set error: " << e << "\n";
+      if (!interp_.stackSet(name, code, e))
+        std::cerr << "stack set error: " << e << "\n";
       else {
         std::cout << "[stack: set '" << name << "' => " << code << "]\n";
-        hasLastTiming_=false;
+        hasLastTiming_ = false;
       }
       return true;
     }
-    if (args.rfind("swap",0)==0) {
+    if (args.rfind("swap", 0) == 0) {
       std::string rest = trim(args.substr(4));
       size_t sp = rest.find(' ');
-      if (sp == std::string::npos) { std::cout << "usage: :stack swap <i> <j>  (swap history entries)\n"; return true; }
+      if (sp == std::string::npos) {
+        std::cout << "usage: :stack swap <i> <j>  (swap history entries)\n";
+        return true;
+      }
       std::string a = trim(rest.substr(0, sp));
-      std::string b = trim(rest.substr(sp+1));
-      char *e1=nullptr, *e2=nullptr;
+      std::string b = trim(rest.substr(sp + 1));
+      char *e1 = nullptr, *e2 = nullptr;
       unsigned long ia = strtoul(a.c_str(), &e1, 10);
       unsigned long ib = strtoul(b.c_str(), &e2, 10);
-      if (e1==a.c_str() || e2==b.c_str()) { std::cout << "usage: :stack swap <i> <j>  (indices from :dump)\n"; return true; }
+      if (e1 == a.c_str() || e2 == b.c_str()) {
+        std::cout << "usage: :stack swap <i> <j>  (indices from :dump)\n";
+        return true;
+      }
       std::string e;
-      if (!interp_.stackSwap((size_t)ia, (size_t)ib, e)) std::cerr << "stack swap error: " << e << "\n";
-      else std::cout << "[stack: swapped " << ia << " <-> " << ib << "]\n";
+      if (!interp_.stackSwap((size_t)ia, (size_t)ib, e))
+        std::cerr << "stack swap error: " << e << "\n";
+      else
+        std::cout << "[stack: swapped " << ia << " <-> " << ib << "]\n";
       return true;
     }
-    if (args.rfind("edit",0)==0) {
+    if (args.rfind("edit", 0) == 0) {
       std::string rest = trim(args.substr(4));
       size_t sp = rest.find(' ');
-      if (sp == std::string::npos) { std::cout << "usage: :stack edit <i> <code>  (replace history entry i)\n"; return true; }
+      if (sp == std::string::npos) {
+        std::cout << "usage: :stack edit <i> <code>  (replace history entry i)\n";
+        return true;
+      }
       std::string idxStr = trim(rest.substr(0, sp));
-      std::string code = trim(rest.substr(sp+1));
-      char *end=nullptr; unsigned long idx = strtoul(idxStr.c_str(), &end, 10);
-      if (end==idxStr.c_str()) { std::cout << "usage: :stack edit <i> <code>\n"; return true; }
+      std::string code = trim(rest.substr(sp + 1));
+      char *end = nullptr;
+      unsigned long idx = strtoul(idxStr.c_str(), &end, 10);
+      if (end == idxStr.c_str()) {
+        std::cout << "usage: :stack edit <i> <code>\n";
+        return true;
+      }
       std::string e;
       // Remove old at idx and push new at same position via swap logic: pop and insert
       // For now, do clear and rebuild without idx, then push new at idx position
@@ -779,7 +970,10 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       std::string localErr;
       // Save current history size
       size_t sz = interp_.historySize();
-      if (idx >= sz) { std::cerr << "stack edit error: index out of range\n"; return true; }
+      if (idx >= sz) {
+        std::cerr << "stack edit error: index out of range\n";
+        return true;
+      }
       // Remove idx via stackRemove of its variable if possible, otherwise pop and re-push
       // Simplest: pop from idx to end, then push new, then push rest
       // We can achieve by: save history vector, clear, replay
@@ -790,7 +984,8 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       // Use a simple heuristic: code is like "int x = 5;" -> name is x
       // We can just do stackRemove of old variable at idx (if we can get it) and then stackPush
       // For now, fallback to stackPop + stackPush
-      std::cout << "  (edit not yet fully implemented — use :stack rm <var> then :stack push <code>)\n";
+      std::cout
+          << "  (edit not yet fully implemented — use :stack rm <var> then :stack push <code>)\n";
       return true;
     }
     // Fallback: unknown subcommand -> show stack
@@ -811,13 +1006,18 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     // Aliases: :forget, :clearstack, :drop all map to the same full reset for now.
     // Future: :forget <var> could drop a single variable via Interpreter::forget().
     std::string target;
-    if (t.rfind(":forget", 0) == 0) target = trim(t.substr(7));
-    else if (t.rfind(":flush", 0) == 0) target = trim(t.substr(6));
-    else if (t.rfind(":clearstack", 0) == 0) target = trim(t.substr(11));
-    else if (t.rfind(":drop", 0) == 0) target = trim(t.substr(5));
+    if (t.rfind(":forget", 0) == 0)
+      target = trim(t.substr(7));
+    else if (t.rfind(":flush", 0) == 0)
+      target = trim(t.substr(6));
+    else if (t.rfind(":clearstack", 0) == 0)
+      target = trim(t.substr(11));
+    else if (t.rfind(":drop", 0) == 0)
+      target = trim(t.substr(5));
 
     // If a specific variable name is given, try to forget just that variable
-    if (!target.empty() && target[0] != ':' && target.find(' ') == std::string::npos && target.find('\t') == std::string::npos) {
+    if (!target.empty() && target[0] != ':' && target.find(' ') == std::string::npos &&
+        target.find('\t') == std::string::npos) {
       // Single word argument like ":flush x" or ":forget myVar"
       // For now, treat as full flush with hint (per-variable forgetting needs PTU tracking)
       // We still do a full reset but tell the user what was requested
@@ -825,13 +1025,15 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       if (!err.empty())
         std::cerr << "flush error: " << err << "\n";
       else
-        std::cout << "[flushed stack" << (target.empty() ? "" : std::string(" (") + target + ")") << " — all definitions cleared, variables no longer exist]\n";
+        std::cout << "[flushed stack" << (target.empty() ? "" : std::string(" (") + target + ")")
+                  << " — all definitions cleared, variables no longer exist]\n";
       promptCount_ = 1;
       hasLastTiming_ = false;
       return true;
     }
     if (!target.empty()) {
-      std::cout << "usage: :flush [var]  (flush stack — clears all definitions so variables can be redefined)\n";
+      std::cout << "usage: :flush [var]  (flush stack — clears all definitions so variables can be "
+                   "redefined)\n";
       std::cout << "       aliases: :forget, :clearstack, :drop (same as :reset)\n";
       return true;
     }
@@ -839,7 +1041,10 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     if (!err.empty())
       std::cerr << "reset error: " << err << "\n";
     else
-      std::cout << (t.rfind(":flush",0)==0 || t.rfind(":forget",0)==0 || t.rfind(":clearstack",0)==0 || t.rfind(":drop",0)==0 ? "[flushed stack — all definitions cleared, variables no longer exist]\n" : "[reset]\n");
+      std::cout << (t.rfind(":flush", 0) == 0 || t.rfind(":forget", 0) == 0 ||
+                            t.rfind(":clearstack", 0) == 0 || t.rfind(":drop", 0) == 0
+                        ? "[flushed stack — all definitions cleared, variables no longer exist]\n"
+                        : "[reset]\n");
     promptCount_ = 1;
     hasLastTiming_ = false;
     return true;
@@ -922,7 +1127,8 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       bool ok = false;
       if (path.find('/') != std::string::npos || path.find(".so") != std::string::npos) {
         ok = interp_.loadLibrary(path, e);
-        if (!ok) ok = interp_.addLibrary(path, e);
+        if (!ok)
+          ok = interp_.addLibrary(path, e);
       } else {
         ok = interp_.addLibrary(path, e);
       }
@@ -947,33 +1153,52 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       std::cerr << "undo error: " << e << "\n";
     else {
       std::cout << "[undid " << n << "]\n";
-      if (promptCount_ > (int)n + 1) promptCount_ -= n;
-      else promptCount_ = 1;
+      if (promptCount_ > static_cast<int>(n) + 1)
+        promptCount_ -= n;
+      else
+        promptCount_ = 1;
       hasLastTiming_ = false;
     }
     return true;
   }
   if (t.rfind(":I", 0) == 0 || t.rfind(":include", 0) == 0 || t.rfind(":inc", 0) == 0) {
     std::string path;
-    if (t.rfind(":I", 0) == 0) path = trim(t.substr(2));
-    else if (t.rfind(":include", 0) == 0) path = trim(t.substr(8));
-    else path = trim(t.substr(4));
-    if (!path.empty() && path[0] == '=') path = trim(path.substr(1));
-    if (path.empty()) { std::cout << "usage: :I <path>  (add include path, absolute or relative)\n"; return true; }
+    if (t.rfind(":I", 0) == 0)
+      path = trim(t.substr(2));
+    else if (t.rfind(":include", 0) == 0)
+      path = trim(t.substr(8));
+    else
+      path = trim(t.substr(4));
+    if (!path.empty() && path[0] == '=')
+      path = trim(path.substr(1));
+    if (path.empty()) {
+      std::cout << "usage: :I <path>  (add include path, absolute or relative)\n";
+      return true;
+    }
     std::string e;
-    if (!interp_.addIncludePath(path, e)) std::cerr << "include path error: " << e << "\n";
-    else std::cout << "[include path: " << path << "]\n";
+    if (!interp_.addIncludePath(path, e))
+      std::cerr << "include path error: " << e << "\n";
+    else
+      std::cout << "[include path: " << path << "]\n";
     return true;
   }
   if (t.rfind(":L", 0) == 0 || t.rfind(":libpath", 0) == 0) {
     std::string path;
-    if (t.rfind(":L", 0) == 0) path = trim(t.substr(2));
-    else path = trim(t.substr(8));
-    if (!path.empty() && path[0] == '=') path = trim(path.substr(1));
-    if (path.empty()) { std::cout << "usage: :L <path>  (add library search path)\n"; return true; }
+    if (t.rfind(":L", 0) == 0)
+      path = trim(t.substr(2));
+    else
+      path = trim(t.substr(8));
+    if (!path.empty() && path[0] == '=')
+      path = trim(path.substr(1));
+    if (path.empty()) {
+      std::cout << "usage: :L <path>  (add library search path)\n";
+      return true;
+    }
     std::string e;
-    if (!interp_.addLibraryPath(path, e)) std::cerr << "library path error: " << e << "\n";
-    else std::cout << "[library path: " << path << "]\n";
+    if (!interp_.addLibraryPath(path, e))
+      std::cerr << "library path error: " << e << "\n";
+    else
+      std::cout << "[library path: " << path << "]\n";
     return true;
   }
   if (!t.empty() && t[0] == ':') {
@@ -1000,7 +1225,8 @@ void Session::runInteractive() {
       std::cerr << "\033[31m[error]\033[0m " << msg << "\n";
       // If msg contains hint, highlight it with [fix] label
       if (msg.find("[hint]") != std::string::npos) {
-        std::cerr << "\033[33m[fix]\033[0m " << "see hint above \u2192 try :undo or :reset, or add missing ';' / header\n";
+        std::cerr << "\033[33m[fix]\033[0m "
+                  << "see hint above \u2192 try :undo or :reset, or add missing ';' / header\n";
       }
     } else {
       std::cerr << "[error] " << msg << "\n";
@@ -1013,18 +1239,19 @@ void Session::runInteractive() {
 #ifdef HAS_READLINE
   bool useReadline = isatty(STDIN_FILENO);
   if (useReadline) {
-    rl_readline_name = const_cast<char*>("cpp-repl");
+    rl_readline_name = const_cast<char *>("cpp-repl");
     using_history();
     // zsh-like dynamic completion (menu, colored, case-insensitive, single-Tab list)
     setup_zsh_completion();
     rl_attempted_completion_function = colon_completion;
     const char *home = getenv("HOME");
     std::string histFile = home ? std::string(home) + "/.cpp_repl_history" : "";
-    if (!histFile.empty()) read_history(histFile.c_str());
+    if (!histFile.empty())
+      read_history(histFile.c_str());
     char *raw = nullptr;
     while (true) {
-      std::string promptStr = buffer_.empty() ? buildPrimaryPrompt(true)
-                                              : buildContinuationPrompt(true);
+      std::string promptStr =
+          buffer_.empty() ? buildPrimaryPrompt(true) : buildContinuationPrompt(true);
       raw = readline(promptStr.c_str());
       if (!raw) {
         std::cout << "\nbye\n";
@@ -1035,8 +1262,8 @@ void Session::runInteractive() {
       raw = nullptr;
       std::string t = trim(line);
       if (buffer_.empty()) {
-        if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" ||
-            t == "exit" || t == "quit") {
+        if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" || t == "exit" ||
+            t == "quit") {
           break;
         }
         if (t.empty()) {
@@ -1046,23 +1273,27 @@ void Session::runInteractive() {
         if (handleCommand(line, err)) {
           if (!t.empty()) {
             add_history(line.c_str());
-            if (!histFile.empty()) append_history(1, histFile.c_str());
+            if (!histFile.empty())
+              append_history(1, histFile.c_str());
           }
           continue;
         }
       }
       // Fix for FILE *file without ; at [1] + FILE *file; with ; at [2] being two declarations
-      // If buffer_ is "FILE *file" without ; and line is "FILE *file;" with ; and same, replace instead of append
+      // If buffer_ is "FILE *file" without ; and line is "FILE *file;" with ; and same, replace
+      // instead of append
       {
         auto trim2 = [](std::string s) {
           size_t a = s.find_first_not_of(" \t\r\n");
-          if (a == std::string::npos) return std::string();
+          if (a == std::string::npos)
+            return std::string();
           size_t b = s.find_last_not_of(" \t\r\n");
           return s.substr(a, b - a + 1);
         };
         std::string bufTrim = trim2(buffer_);
         std::string lineTrim = trim2(line);
-        if (!bufTrim.empty() && !lineTrim.empty() && bufTrim.back() != ';' && lineTrim.back() == ';' && bufTrim + ";" == lineTrim) {
+        if (!bufTrim.empty() && !lineTrim.empty() && bufTrim.back() != ';' &&
+            lineTrim.back() == ';' && bufTrim + ";" == lineTrim) {
           buffer_ = line + "\n";
         } else {
           buffer_ += line + "\n";
@@ -1078,14 +1309,14 @@ void Session::runInteractive() {
       }
       {
         std::string histEntry = buffer_;
-        while (!histEntry.empty() &&
-               (histEntry.back() == '\n' || histEntry.back() == '\r'))
+        while (!histEntry.empty() && (histEntry.back() == '\n' || histEntry.back() == '\r'))
           histEntry.pop_back();
         if (!histEntry.empty()) {
           HIST_ENTRY *last = history_get(history_length);
           if (!last || histEntry != last->line) {
             add_history(histEntry.c_str());
-            if (!histFile.empty()) append_history(1, histFile.c_str());
+            if (!histFile.empty())
+              append_history(1, histFile.c_str());
           }
         }
       }
@@ -1100,7 +1331,8 @@ void Session::runInteractive() {
       // Keyword highlight: echo executed code with syntax colors (after execution)
       printHighlightedEcho(buffer_);
       if (!ok) {
-        if (!err.empty()) printError(err);
+        if (!err.empty())
+          printError(err);
         printTimingLine(false, ms);
       } else {
         printTimingLine(true, ms);
@@ -1108,7 +1340,8 @@ void Session::runInteractive() {
       ++promptCount_;
       buffer_.clear();
     }
-    if (!histFile.empty()) write_history(histFile.c_str());
+    if (!histFile.empty())
+      write_history(histFile.c_str());
     return;
   }
 #endif
@@ -1117,8 +1350,7 @@ void Session::runInteractive() {
   while (std::getline(std::cin, line)) {
     std::string t = trim(line);
     if (buffer_.empty()) {
-      if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" ||
-          t == "exit" || t == "quit")
+      if (t == ":quit" || t == ":exit" || t == ":q" || t == ":quit()" || t == "exit" || t == "quit")
         break;
       if (t.empty()) {
         std::cout << buildPrimaryPrompt(false) << std::flush;
@@ -1133,13 +1365,15 @@ void Session::runInteractive() {
     {
       auto trim2 = [](std::string s) {
         size_t a = s.find_first_not_of(" \t\r\n");
-        if (a == std::string::npos) return std::string();
+        if (a == std::string::npos)
+          return std::string();
         size_t b = s.find_last_not_of(" \t\r\n");
         return s.substr(a, b - a + 1);
       };
       std::string bufTrim = trim2(buffer_);
       std::string lineTrim = trim2(line);
-      if (!bufTrim.empty() && !lineTrim.empty() && bufTrim.back() != ';' && lineTrim.back() == ';' && bufTrim + ";" == lineTrim) {
+      if (!bufTrim.empty() && !lineTrim.empty() && bufTrim.back() != ';' &&
+          lineTrim.back() == ';' && bufTrim + ";" == lineTrim) {
         buffer_ = line + "\n";
       } else {
         buffer_ += line + "\n";
@@ -1164,7 +1398,8 @@ void Session::runInteractive() {
     hasLastTiming_ = true;
     printHighlightedEcho(buffer_);
     if (!ok) {
-      if (!err.empty()) printError(err);
+      if (!err.empty())
+        printError(err);
       printTimingLine(false, ms);
     } else {
       printTimingLine(true, ms);

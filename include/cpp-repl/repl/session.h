@@ -1,6 +1,7 @@
 #pragma once
-#include <string>
 #include "cpp-repl/interpreter/interpreter.h"
+
+#include <string>
 
 namespace cpprepl {
 namespace repl {
@@ -71,11 +72,11 @@ private:
   void viewStack() const;
 
   interpreter::Interpreter &interp_; ///< Bound interpreter instance.
-  std::string buffer_; ///< Current multiline buffer.
-  int promptCount_ = 1; ///< Prompt counter for numbered prompts.
-  double lastDurationMs_ = 0.0; ///< Last execution time in ms.
-  bool lastSuccess_ = true; ///< Last execution success flag.
-  bool hasLastTiming_ = false; ///< Whether timing is available.
+  std::string buffer_;               ///< Current multiline buffer.
+  int promptCount_ = 1;              ///< Prompt counter for numbered prompts.
+  double lastDurationMs_ = 0.0;      ///< Last execution time in ms.
+  bool lastSuccess_ = true;          ///< Last execution success flag.
+  bool hasLastTiming_ = false;       ///< Whether timing is available.
 };
 
 } // namespace repl

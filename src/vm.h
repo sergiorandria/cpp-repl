@@ -5,12 +5,12 @@
 #ifndef CPP_REPL_VM_H
 #define CPP_REPL_VM_H
 
-#include <memory>
-#include <string>
-
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/Module.h"
+
+#include <memory>
+#include <string>
 
 namespace vm {
 
@@ -38,13 +38,15 @@ public:
    * @param err Output error.
    * @return true on success.
    */
-  bool addModule(std::unique_ptr<llvm::Module> M,
-                 std::unique_ptr<llvm::LLVMContext> Ctx, std::string &err);
+  bool addModule(std::unique_ptr<llvm::Module> M, std::unique_ptr<llvm::LLVMContext> Ctx,
+                 std::string &err);
 
   /** @brief Lookup symbol address by IR name. */
   llvm::Expected<llvm::orc::ExecutorAddr> lookup(const std::string &name);
 
-  llvm::orc::LLJIT *getLLJIT() { return jit_.get(); }
+  llvm::orc::LLJIT *getLLJIT() {
+    return jit_.get();
+  }
 
 private:
   std::unique_ptr<llvm::orc::LLJIT> jit_;

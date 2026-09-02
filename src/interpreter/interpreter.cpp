@@ -3,28 +3,31 @@
  * @brief Interpreter implementation with high-precision float printing and BigInt handling.
  */
 #include "cpp-repl/interpreter/interpreter.h"
+
 #include "cpp-repl/utils/bigint.h"
 #include "cpp-repl/utils/highlight.h"
 #include "cpp-repl/utils/incomplete_detector.h"
 #include "cpp-repl/utils/version_detector.h"
+
+#include "clang/AST/Type.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Interpreter/Interpreter.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
-#include "clang/AST/Type.h"
-#include <fstream>
-#include <iostream>
-#include <sstream>
-#include <regex>
-#include <filesystem>
+
 #include <algorithm>
-#include <limits>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <regex>
+#include <sstream>
 #ifndef _WIN32
-#include <unistd.h>
 #include <sys/resource.h>
+#include <unistd.h>
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
@@ -143,16 +146,20 @@ static void highPrecisionDump(const clang::Value &V) {
   // Keyword highlight: colorize type and value when tty and color enabled
   bool useColor = false;
 #ifndef _WIN32
-  useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR") && !getenv("NO_COLOUR");
+  useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR") &&
+             !getenv("NO_COLOUR");
   if (useColor) {
     const char *term = getenv("TERM");
-    if (term && std::string(term)=="dumb") useColor=false;
+    if (term && std::string(term) == "dumb")
+      useColor = false;
   }
-  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE")) useColor = true;
+  if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE"))
+    useColor = true;
 #else
   useColor = false;
 #endif
-  if (getenv("CPP_REPL_NO_COLOR") || getenv("NO_COLOR")) useColor = false;
+  if (getenv("CPP_REPL_NO_COLOR") || getenv("NO_COLOR"))
+    useColor = false;
   if (useColor) {
     std::string colVal = cpprepl::utils::Highlighter::highlightValue(dataStr, true);
     llvm::outs() << "\033[90m[result]\033[0m (\033[36m" << typeStr << "\033[0m) " << colVal << "\n";
@@ -168,9 +175,8 @@ namespace interpreter {
 Interpreter::Interpreter() : tracker_(utils::VariableTrackerFactory::create()) {}
 Interpreter::~Interpreter() = default;
 
-bool Interpreter::init(utils::StdVersion version,
-                   const std::vector<std::string> &includePaths,
-                   const std::vector<std::string> &defines, std::string &err) {
+bool Interpreter::init(utils::StdVersion version, const std::vector<std::string> &includePaths,
+                       const std::vector<std::string> &defines, std::string &err) {
   return init(version, includePaths, defines, {}, {}, err);
 }
 
@@ -178,12 +184,10 @@ bool Interpreter::init(utils::StdVersion version, std::string &err) {
   return init(version, {}, {}, err);
 }
 
-bool Interpreter::init(utils::StdVersion version,
-                   const std::vector<std::string> &includePaths,
-                   const std::vector<std::string> &defines,
-                   const std::vector<std::string> &libraryPaths,
-                   const std::vector<std::string> &libraries,
-                   std::string &err) {
+bool Interpreter::init(utils::StdVersion version, const std::vector<std::string> &includePaths,
+                       const std::vector<std::string> &defines,
+                       const std::vector<std::string> &libraryPaths,
+                       const std::vector<std::string> &libraries, std::string &err) {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
   llvm::InitializeNativeTargetAsmParser();
@@ -210,19 +214,20 @@ bool Interpreter::init(utils::StdVersion version,
     std::error_code ec;
     if (!std::filesystem::exists(resDir, ec)) {
       const std::vector<std::string> candidates = {
-        "/usr/lib/llvm-22/lib/clang/22",
-        "/usr/lib/clang/22",
-        "/usr/lib/llvm/lib/clang/22",
-        "/usr/lib/llvm-22/lib/clang/22"
-      };
+          "/usr/lib/llvm-22/lib/clang/22", "/usr/lib/clang/22", "/usr/lib/llvm/lib/clang/22",
+          "/usr/lib/llvm-22/lib/clang/22"};
       for (auto &c : candidates) {
-        if (std::filesystem::exists(c, ec)) { resDir = c; break; }
+        if (std::filesystem::exists(c, ec)) {
+          resDir = c;
+          break;
+        }
       }
     }
     compilerArgsStorage_.push_back(resDir);
   }
   // Fix for Numpy-C-API headers (NZERO, vector<bool>, ProxyBase) without modifying them
-  // Make -include conditional: only add if header actually exists, otherwise skip (prevents fatal error in CI artifact)
+  // Make -include conditional: only add if header actually exists, otherwise skip (prevents fatal
+  // error in CI artifact)
 #ifndef CPP_REPL_INCLUDE_DIR
 #define CPP_REPL_INCLUDE_DIR "/usr/include"
 #endif
@@ -281,20 +286,19 @@ bool Interpreter::init(utils::StdVersion version,
 
   std::vector<const char *> args;
   args.reserve(compilerArgsStorage_.size());
-  for (auto &s : compilerArgsStorage_) args.push_back(s.c_str());
+  for (auto &s : compilerArgsStorage_)
+    args.push_back(s.c_str());
 
   builder.SetCompilerArgs(args);
   auto CI = builder.CreateCpp();
   if (!CI) {
-    llvm::handleAllErrors(
-        CI.takeError(), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(CI.takeError(), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   auto interpOrErr = clang::Interpreter::create(std::move(*CI));
   if (!interpOrErr) {
-    llvm::handleAllErrors(
-        interpOrErr.takeError(),
-        [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(interpOrErr.takeError(),
+                          [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   interp_ = std::move(*interpOrErr);
@@ -305,11 +309,11 @@ bool Interpreter::init(utils::StdVersion version,
     clang::Value V;
     auto e = interp_->ParseAndExecute(utils::BigIntSupport::preamble(), &V);
     if (e)
-      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) {});
+      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &) {});
 #ifdef HAS_GMP
     auto e2 = interp_->ParseAndExecute(utils::BigIntSupport::gmpPreamble(), &V);
     if (e2)
-      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
+      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
 #endif
   }
   // Auto-include standard library (bits/stdc++.h) by default for STL support
@@ -318,47 +322,66 @@ bool Interpreter::init(utils::StdVersion version,
   for (auto &lib : libraries_) {
     auto tryLoad = [&](const std::string &path) -> bool {
       if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
-        llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){});
+        llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &) {});
         return false;
       }
       return true;
     };
     // If lib contains '/', treat as path (absolute or relative)
     if (lib.find('/') != std::string::npos) {
-      if (tryLoad(lib)) continue;
+      if (tryLoad(lib))
+        continue;
       // Try with .so suffix if no extension
       if (lib.find(".so") == std::string::npos) {
-        if (tryLoad(lib + ".so")) continue;
+        if (tryLoad(lib + ".so"))
+          continue;
       }
       // Fall through to error (will be reported via LoadDynamicLibrary)
       continue;
     }
     // Bare lib name like "m", "gmp", "mylib"
     // Try as given, then lib + .so, then lib<name>.so variants
-    if (tryLoad(lib)) continue;
+    if (tryLoad(lib))
+      continue;
     if (lib.find(".so") == std::string::npos) {
-      if (tryLoad(lib + ".so")) continue;
-      if (tryLoad("lib" + lib + ".so")) continue;
+      if (tryLoad(lib + ".so"))
+        continue;
+      if (tryLoad("lib" + lib + ".so"))
+        continue;
     }
     // Search in libraryPaths
     bool found = false;
     for (auto &lp : libraryPaths_) {
       std::string base = lp;
-      if (!base.empty() && base.back() == '/') base.pop_back();
-      if (tryLoad(base + "/" + lib)) { found = true; break; }
+      if (!base.empty() && base.back() == '/')
+        base.pop_back();
+      if (tryLoad(base + "/" + lib)) {
+        found = true;
+        break;
+      }
       if (lib.find(".so") == std::string::npos) {
-        if (tryLoad(base + "/" + lib + ".so")) { found = true; break; }
-        if (tryLoad(base + "/lib" + lib + ".so")) { found = true; break; }
+        if (tryLoad(base + "/" + lib + ".so")) {
+          found = true;
+          break;
+        }
+        if (tryLoad(base + "/lib" + lib + ".so")) {
+          found = true;
+          break;
+        }
       }
     }
-    if (found) continue;
+    if (found)
+      continue;
     // Also try system default search for -l<lib> style (e.g., -l m -> libm.so)
     if (lib.find(".so") == std::string::npos && lib.find("lib") != 0) {
       std::string sysLib = "lib" + lib + ".so";
-      if (tryLoad(sysLib)) continue;
+      if (tryLoad(sysLib))
+        continue;
       // Try common system paths
-      if (tryLoad("/usr/lib/" + sysLib)) continue;
-      if (tryLoad("/usr/lib/x86_64-linux-gnu/" + sysLib)) continue;
+      if (tryLoad("/usr/lib/" + sysLib))
+        continue;
+      if (tryLoad("/usr/lib/x86_64-linux-gnu/" + sysLib))
+        continue;
     }
     // If still not found, keep library as is (error will be reported on use)
   }
@@ -381,59 +404,77 @@ bool Interpreter::reinitWithCurrentOptions(std::string &err) {
   }
   for (auto &h : oldHistory) {
     std::string e;
-    if (!eval(h, e)) { /* keep going */ }
+    if (!eval(h, e)) { /* keep going */
+    }
   }
   return true;
 }
 
 auto Interpreter::addIncludePath(const std::string &path, std::string &err) -> bool {
-  for (auto &p : includePaths_) if (p == path) return true;
+  for (auto &p : includePaths_)
+    if (p == path)
+      return true;
   includePaths_.push_back(path);
   return reinitWithCurrentOptions(err);
 }
 auto Interpreter::addLibraryPath(const std::string &path, std::string &err) -> bool {
-  for (auto &p : libraryPaths_) if (p == path) return true;
+  for (auto &p : libraryPaths_)
+    if (p == path)
+      return true;
   libraryPaths_.push_back(path);
   return reinitWithCurrentOptions(err);
 }
 auto Interpreter::addLibrary(const std::string &lib, std::string &err) -> bool {
   libraries_.push_back(lib);
-  if (!initialized_) return true;
+  if (!initialized_)
+    return true;
   auto tryLoad = [&](const std::string &path) -> bool {
     // std::cerr << "[tryLoad " << path << "]\n";
     if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
-      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){ err = EIB.message(); });
+      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
       return false;
     }
     err.clear();
     return true;
   };
   if (lib.find('/') != std::string::npos) {
-    if (tryLoad(lib)) return true;
+    if (tryLoad(lib))
+      return true;
     if (lib.find(".so") == std::string::npos) {
-      if (tryLoad(lib + ".so")) return true;
+      if (tryLoad(lib + ".so"))
+        return true;
     }
     return false;
   }
-  if (tryLoad(lib)) return true;
+  if (tryLoad(lib))
+    return true;
   if (lib.find(".so") == std::string::npos) {
-    if (tryLoad(lib + ".so")) return true;
-    if (tryLoad("lib" + lib + ".so")) return true;
+    if (tryLoad(lib + ".so"))
+      return true;
+    if (tryLoad("lib" + lib + ".so"))
+      return true;
   }
   for (auto &lp : libraryPaths_) {
     std::string base = lp;
-    if (!base.empty() && base.back() == '/') base.pop_back();
-    if (tryLoad(base + "/" + lib)) return true;
+    if (!base.empty() && base.back() == '/')
+      base.pop_back();
+    if (tryLoad(base + "/" + lib))
+      return true;
     if (lib.find(".so") == std::string::npos) {
-      if (tryLoad(base + "/" + lib + ".so")) return true;
-      if (tryLoad(base + "/lib" + lib + ".so")) return true;
+      if (tryLoad(base + "/" + lib + ".so"))
+        return true;
+      if (tryLoad(base + "/lib" + lib + ".so"))
+        return true;
     }
   }
   if (lib.find(".so") == std::string::npos && lib.find("lib") != 0) {
     std::string sysLib = "lib" + lib + ".so";
-    if (tryLoad(sysLib)) return true;
-    if (tryLoad("/usr/lib/" + sysLib)) return true;
-    if (tryLoad("/usr/lib/x86_64-linux-gnu/" + sysLib)) return true;
+    if (tryLoad(sysLib))
+      return true;
+    if (tryLoad("/usr/lib/" + sysLib))
+      return true;
+    if (tryLoad("/usr/lib/x86_64-linux-gnu/" + sysLib))
+      return true;
   }
   return false;
 }
@@ -467,12 +508,16 @@ bool Interpreter::ensureVersion(utils::StdVersion needed, std::string &err) {
 }
 
 bool Interpreter::tryIncludeStdLib() {
-  if (stdLibIncluded_ || !initialized_ || !interp_) return stdLibIncluded_;
+  if (stdLibIncluded_ || !initialized_ || !interp_)
+    return stdLibIncluded_;
   clang::Value V;
   // Try bits/stdc++.h first (covers everything)
   auto e = interp_->ParseAndExecute("#include <bits/stdc++.h>\n", &V);
-  if (!e) { stdLibIncluded_ = true; return true; }
-  llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){});
+  if (!e) {
+    stdLibIncluded_ = true;
+    return true;
+  }
+  llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &) {});
   // Fallback: include common STL headers individually
   const char *fallback = R"(
 #include <iostream>
@@ -493,15 +538,25 @@ bool Interpreter::tryIncludeStdLib() {
 #include <cstddef>
 )";
   auto e2 = interp_->ParseAndExecute(fallback, &V);
-  if (!e2) { stdLibIncluded_ = true; return true; }
-  llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+  if (!e2) {
+    stdLibIncluded_ = true;
+    return true;
+  }
+  llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
   return false;
 }
 
 bool Interpreter::ensureStdLib(std::string &err) {
-  if (stdLibIncluded_) return true;
-  if (!initialized_) { err = "REPL not initialized"; return false; }
-  if (tryIncludeStdLib()) { err.clear(); return true; }
+  if (stdLibIncluded_)
+    return true;
+  if (!initialized_) {
+    err = "REPL not initialized";
+    return false;
+  }
+  if (tryIncludeStdLib()) {
+    err.clear();
+    return true;
+  }
   err = "failed to include standard library (bits/stdc++.h)";
   return false;
 }
@@ -521,61 +576,69 @@ static std::string preprocessBigIntLiterals(const std::string &code) {
   std::string result = code;
   // Regex for (bigint|cpp_int|mpz_int|mpz|mpq)\s+(\w+)\s*=\s*([0-9]{19,})\s*;
   // Use ECMA regex and replace
-    // NOTE: regex may throw std::regex_error; with -fno-exceptions we avoid try/catch
-    // and assume pattern is valid (tested). If it throws, it will terminate.
-    std::regex re(R"((\b(?:bigint|cpp_int|mpz_int|mpz|mpq_rational|mpq)\b\s+\w+\s*=\s*)([0-9]{19,})(\s*;))");
-    // Wrap the digits in type("digits")
-    // We need to know the type to wrap correctly: e.g., bigint g = 123 -> bigint g = bigint("123");
-    // So we capture prefix and digits and suffix
-    std::string out;
-    std::sregex_iterator it(result.begin(), result.end(), re);
-    std::sregex_iterator end;
-    size_t lastPos = 0;
-    for (; it != end; ++it) {
-      auto &m = *it;
-      std::string prefix = m[1].str();
-      std::string digits = m[2].str();
-      std::string suffix = m[3].str();
-      // Extract type from prefix (first word)
-      std::string type;
-      {
-        std::istringstream iss(prefix);
-        iss >> type;
-        // type may be like "bigint" or "const bigint" – find last word before variable
-        // For simplicity, find first occurrence of bigint etc. in prefix
-        if (prefix.find("bigint") != std::string::npos) type = "bigint";
-        else if (prefix.find("cpp_int") != std::string::npos) type = "cpp_int";
-        else if (prefix.find("mpz_int") != std::string::npos) type = "mpz_int";
-        else if (prefix.find("mpz") != std::string::npos) type = "mpz";
-        else if (prefix.find("mpq") != std::string::npos) type = "mpq_rational";
-        else type = "bigint";
-      }
-      out.append(result, lastPos, m.position() - lastPos);
-      out += prefix + type + "(\"" + digits + "\")" + suffix;
-      lastPos = m.position() + m.length();
+  // NOTE: regex may throw std::regex_error; with -fno-exceptions we avoid try/catch
+  // and assume pattern is valid (tested). If it throws, it will terminate.
+  std::regex re(
+      R"((\b(?:bigint|cpp_int|mpz_int|mpz|mpq_rational|mpq)\b\s+\w+\s*=\s*)([0-9]{19,})(\s*;))");
+  // Wrap the digits in type("digits")
+  // We need to know the type to wrap correctly: e.g., bigint g = 123 -> bigint g = bigint("123");
+  // So we capture prefix and digits and suffix
+  std::string out;
+  std::sregex_iterator it(result.begin(), result.end(), re);
+  std::sregex_iterator end;
+  size_t lastPos = 0;
+  for (; it != end; ++it) {
+    auto &m = *it;
+    std::string prefix = m[1].str();
+    std::string digits = m[2].str();
+    std::string suffix = m[3].str();
+    // Extract type from prefix (first word)
+    std::string type;
+    {
+      std::istringstream iss(prefix);
+      iss >> type;
+      // type may be like "bigint" or "const bigint" – find last word before variable
+      // For simplicity, find first occurrence of bigint etc. in prefix
+      if (prefix.find("bigint") != std::string::npos)
+        type = "bigint";
+      else if (prefix.find("cpp_int") != std::string::npos)
+        type = "cpp_int";
+      else if (prefix.find("mpz_int") != std::string::npos)
+        type = "mpz_int";
+      else if (prefix.find("mpz") != std::string::npos)
+        type = "mpz";
+      else if (prefix.find("mpq") != std::string::npos)
+        type = "mpq_rational";
+      else
+        type = "bigint";
     }
-    out.append(result, lastPos, std::string::npos);
-    if (lastPos != 0) result = out;
+    out.append(result, lastPos, m.position() - lastPos);
+    out += prefix + type + "(\"" + digits + "\")" + suffix;
+    lastPos = m.position() + m.length();
+  }
+  out.append(result, lastPos, std::string::npos);
+  if (lastPos != 0)
+    result = out;
 
-    // Also handle auto g = 4949... where 4949... is large and initializing bigint-like auto
-    // For auto with large literal, wrap as cpp_int("...")
-    std::regex autoRe(R"((\bauto\b\s+\w+\s*=\s*)([0-9]{19,})(\s*;))");
-    out.clear();
-    lastPos = 0;
-    std::sregex_iterator it2(result.begin(), result.end(), autoRe);
-    for (; it2 != end; ++it2) {
-      auto &m = *it2;
-      std::string prefix = m[1].str();
-      std::string digits = m[2].str();
-      std::string suffix = m[3].str();
-      out.append(result, lastPos, m.position() - lastPos);
-      out += prefix + "cpp_int(\"" + digits + "\")" + suffix;
-      lastPos = m.position() + m.length();
-    }
-    if (lastPos != 0) {
-      out.append(result, lastPos, std::string::npos);
-      result = out;
-    }
+  // Also handle auto g = 4949... where 4949... is large and initializing bigint-like auto
+  // For auto with large literal, wrap as cpp_int("...")
+  std::regex autoRe(R"((\bauto\b\s+\w+\s*=\s*)([0-9]{19,})(\s*;))");
+  out.clear();
+  lastPos = 0;
+  std::sregex_iterator it2(result.begin(), result.end(), autoRe);
+  for (; it2 != end; ++it2) {
+    auto &m = *it2;
+    std::string prefix = m[1].str();
+    std::string digits = m[2].str();
+    std::string suffix = m[3].str();
+    out.append(result, lastPos, m.position() - lastPos);
+    out += prefix + "cpp_int(\"" + digits + "\")" + suffix;
+    lastPos = m.position() + m.length();
+  }
+  if (lastPos != 0) {
+    out.append(result, lastPos, std::string::npos);
+    result = out;
+  }
   return result;
 }
 
@@ -589,9 +652,8 @@ static inline std::string trim_copy(const std::string &s) {
 }
 static inline std::string rtrim_semi(const std::string &s) {
   std::string t = trim_copy(s);
-  while (!t.empty() &&
-         (t.back() == ';' || t.back() == '\n' || t.back() == '\r' ||
-          t.back() == ' ' || t.back() == '\t')) {
+  while (!t.empty() && (t.back() == ';' || t.back() == '\n' || t.back() == '\r' ||
+                        t.back() == ' ' || t.back() == '\t')) {
     if (t.back() == ';') {
       t.pop_back();
       t = trim_copy(t);
@@ -612,7 +674,8 @@ std::string Interpreter::normalizeValue(const std::string &v) {
   bool inSpace = false;
   for (char c : t) {
     if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-      if (!inSpace) out.push_back(' ');
+      if (!inSpace)
+        out.push_back(' ');
       inSpace = true;
     } else {
       out.push_back(c);
@@ -622,23 +685,28 @@ std::string Interpreter::normalizeValue(const std::string &v) {
   return trim_copy(out);
 }
 
-bool Interpreter::parseDeclaration(const std::string &code, std::string &type,
-                                   std::string &name, std::string &value) {
+bool Interpreter::parseDeclaration(const std::string &code, std::string &type, std::string &name,
+                                   std::string &value) {
   std::string t = trim_copy(code);
   static std::regex declRegex(
       R"(^\s*((?:(?:const|constexpr|static|volatile|inline|extern|mutable)\s+)*)([\w:\<\>\,\s]+?)\s*([\*\&]*)\s*(\w+)\s*(?:=\s*(.+?)|\s*(\(.+?\)|\{.+?\}))?\s*;?\s*$)",
       std::regex::ECMAScript);
   std::smatch m;
-  if (!std::regex_match(t, m, declRegex)) return false;
+  if (!std::regex_match(t, m, declRegex))
+    return false;
   std::string qualifiers = trim_copy(m[1].str());
   std::string rawType = trim_copy(m[2].str());
   std::string stars = trim_copy(m[3].str());
   std::string rawName = trim_copy(m[4].str());
   std::string rawVal;
-  if (m[5].matched) rawVal = trim_copy(m[5].str());
-  else if (m[6].matched) rawVal = trim_copy(m[6].str());
-  else rawVal = std::string();
-  if (rawType.empty()) return false;
+  if (m[5].matched)
+    rawVal = trim_copy(m[5].str());
+  else if (m[6].matched)
+    rawVal = trim_copy(m[6].str());
+  else
+    rawVal = std::string();
+  if (rawType.empty())
+    return false;
   if (rawName == "if" || rawName == "for" || rawName == "while" || rawName == "return")
     return false;
   std::string fullType = trim_copy(qualifiers + (qualifiers.empty() ? "" : " ") + rawType);
@@ -648,38 +716,31 @@ bool Interpreter::parseDeclaration(const std::string &code, std::string &type,
   fullType = normalizeValue(fullType);
   std::string lower = fullType;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  bool hasTypeKeyword = lower.find("int") != std::string::npos ||
-                        lower.find("double") != std::string::npos ||
-                        lower.find("float") != std::string::npos ||
-                        lower.find("char") != std::string::npos ||
-                        lower.find("long") != std::string::npos ||
-                        lower.find("short") != std::string::npos ||
-                        lower.find("unsigned") != std::string::npos ||
-                        lower.find("auto") != std::string::npos ||
-                        lower.find("string") != std::string::npos ||
-                        lower.find("bool") != std::string::npos ||
-                        lower.find("cpp_int") != std::string::npos ||
-                        lower.find("bigint") != std::string::npos ||
-                        lower.find("vector") != std::string::npos ||
-                        lower.find("map") != std::string::npos ||
-                        lower.find("std::") != std::string::npos ||
-                        fullType.find("::") != std::string::npos ||
-                        fullType.find("<") != std::string::npos ||
-                        fullType.find("*") != std::string::npos ||
-                        fullType.find("&") != std::string::npos;
-  if (!hasTypeKeyword) return false;
+  bool hasTypeKeyword =
+      lower.find("int") != std::string::npos || lower.find("double") != std::string::npos ||
+      lower.find("float") != std::string::npos || lower.find("char") != std::string::npos ||
+      lower.find("long") != std::string::npos || lower.find("short") != std::string::npos ||
+      lower.find("unsigned") != std::string::npos || lower.find("auto") != std::string::npos ||
+      lower.find("string") != std::string::npos || lower.find("bool") != std::string::npos ||
+      lower.find("cpp_int") != std::string::npos || lower.find("bigint") != std::string::npos ||
+      lower.find("vector") != std::string::npos || lower.find("map") != std::string::npos ||
+      lower.find("std::") != std::string::npos || fullType.find("::") != std::string::npos ||
+      fullType.find("<") != std::string::npos || fullType.find("*") != std::string::npos ||
+      fullType.find("&") != std::string::npos;
+  if (!hasTypeKeyword)
+    return false;
   type = fullType;
   name = rawName;
   value = normalizeValue(rawVal);
   return true;
 }
 
-bool Interpreter::parseAssignment(const std::string &code, std::string &name,
-                                  std::string &value) {
+bool Interpreter::parseAssignment(const std::string &code, std::string &name, std::string &value) {
   std::string t = trim_copy(code);
   static std::regex assignRegex(R"(^\s*(\w+)\s*=\s*(.+?)\s*;?\s*$)");
   std::smatch m;
-  if (!std::regex_match(t, m, assignRegex)) return false;
+  if (!std::regex_match(t, m, assignRegex))
+    return false;
   name = trim_copy(m[1].str());
   value = normalizeValue(trim_copy(m[2].str()));
   return true;
@@ -710,22 +771,29 @@ std::string Interpreter::sanitizeIncludes(const std::string &code) {
           std::error_code ec;
           bool exists = std::filesystem::exists(incPath, ec);
           bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
-          if (!ec && exists && isDir) {}
+          if (!ec && exists && isDir) {
+          }
         }
       }
     }
     result += resultLine + "\n";
   }
-  if (!changed) return code;
+  if (!changed)
+    return code;
   return result;
 }
 
 bool Interpreter::checkVariableRedefinition(const std::string &code, std::string &err) {
   std::string trimmed = trim_copy(code);
-  if (trimmed.find('\n') != std::string::npos) return true;
-  if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ':') return true;
-  if (trimmed.rfind("int ", 0) == 0 && trimmed.find('(') != std::string::npos && trimmed.find(')') != std::string::npos && trimmed.find('{') != std::string::npos) return true;
-  if (trimmed.find("for") == 0 || trimmed.find("while") == 0 || trimmed.find("if") == 0 || trimmed.find("struct ") != std::string::npos || trimmed.find("class ") != std::string::npos)
+  if (trimmed.find('\n') != std::string::npos)
+    return true;
+  if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ':')
+    return true;
+  if (trimmed.rfind("int ", 0) == 0 && trimmed.find('(') != std::string::npos &&
+      trimmed.find(')') != std::string::npos && trimmed.find('{') != std::string::npos)
+    return true;
+  if (trimmed.find("for") == 0 || trimmed.find("while") == 0 || trimmed.find("if") == 0 ||
+      trimmed.find("struct ") != std::string::npos || trimmed.find("class ") != std::string::npos)
     return true;
   std::string type, name, value;
   if (parseDeclaration(trimmed, type, name, value)) {
@@ -733,10 +801,12 @@ bool Interpreter::checkVariableRedefinition(const std::string &code, std::string
     auto prev = tracker_->find(name);
     if (prev) {
       if (prev->type == type && prev->value == value) {
-        std::cout << "[ignored: redefinition of '" << name << "' with same value " << value << " (type " << type << ")]\n";
+        std::cout << "[ignored: redefinition of '" << name << "' with same value " << value
+                  << " (type " << type << ")]\n";
         return false;
       } else {
-        err = "redefinition of '" + name + "' with different value (previous: " + prev->value + " [" + prev->type + "] vs new: " + value + " [" + type + "])";
+        err = "redefinition of '" + name + "' with different value (previous: " + prev->value +
+              " [" + prev->type + "] vs new: " + value + " [" + type + "])";
         err += " [hint: same name & same value is allowed and ignored]";
         return false;
       }
@@ -747,8 +817,10 @@ bool Interpreter::checkVariableRedefinition(const std::string &code, std::string
 
 void Interpreter::trackVariable(const std::string &code) {
   std::string trimmed = trim_copy(code);
-  if (trimmed.find('\n') != std::string::npos) return;
-  if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ':') return;
+  if (trimmed.find('\n') != std::string::npos)
+    return;
+  if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ':')
+    return;
   std::string type, name, value;
   if (parseDeclaration(trimmed, type, name, value)) {
     varHistory_.push_back(variables_);
@@ -805,25 +877,35 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
   if (trimmed.rfind("#include", 0) == 0) {
     size_t q1 = sanitized.find('"');
     size_t q2 = std::string::npos;
-    if (q1 != std::string::npos) q2 = sanitized.find('"', q1 + 1);
+    if (q1 != std::string::npos)
+      q2 = sanitized.find('"', q1 + 1);
     std::string incPath;
-    if (q1 != std::string::npos && q2 != std::string::npos) incPath = sanitized.substr(q1 + 1, q2 - q1 - 1);
+    if (q1 != std::string::npos && q2 != std::string::npos)
+      incPath = sanitized.substr(q1 + 1, q2 - q1 - 1);
     else {
       size_t a1 = sanitized.find('<');
       size_t a2 = sanitized.find('>', a1 + 1);
-      if (a1 != std::string::npos && a2 != std::string::npos) incPath = sanitized.substr(a1 + 1, a2 - a1 - 1);
+      if (a1 != std::string::npos && a2 != std::string::npos)
+        incPath = sanitized.substr(a1 + 1, a2 - a1 - 1);
     }
     if (!incPath.empty()) {
       std::error_code ec;
       bool exists = std::filesystem::exists(incPath, ec);
       bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
       if (!ec && exists && isDir) {
-        err = "fatal error: '" + incPath + "' is a directory, not a file [hint] Did you mean '" + incPath + "/np.hpp'? Use -I <path-to-Numpy-C-API>/include and #include \"np/np.hpp\" or #include <np/np.hpp>. Available: ";
+        err = "fatal error: '" + incPath + "' is a directory, not a file [hint] Did you mean '" +
+              incPath +
+              "/np.hpp'? Use -I <path-to-Numpy-C-API>/include and #include \"np/np.hpp\" or "
+              "#include <np/np.hpp>. Available: ";
         std::error_code ec2;
         int cnt = 0;
         for (auto &entry : std::filesystem::directory_iterator(incPath, ec2)) {
-          if (ec2) break;
-          if (cnt++ >= 6) { err += "..."; break; }
+          if (ec2)
+            break;
+          if (cnt++ >= 6) {
+            err += "...";
+            break;
+          }
           err += entry.path().filename().string() + " ";
         }
         return false;
@@ -847,19 +929,20 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
   bool needsSemi = false;
   if (!trimmed.empty() && trimmed.back() != ';' && trimmed[0] != '#') {
     // Don't auto-add ; for plain blocks that are not variable declarations
-    bool isBraceBlock = (trimmed.back() == '}' || trimmed.back() == '{') && trimmed.find('=') == std::string::npos;
+    bool isBraceBlock =
+        (trimmed.back() == '}' || trimmed.back() == '{') && trimmed.find('=') == std::string::npos;
     if (!isBraceBlock) {
-      bool isDecl =
-          trimmed.find('=') != std::string::npos ||
-          trimmed.rfind("int ", 0) == 0 || trimmed.rfind("auto ", 0) == 0 ||
-          trimmed.rfind("float ", 0) == 0 || trimmed.rfind("double ", 0) == 0 ||
-          trimmed.rfind("char ", 0) == 0 || trimmed.rfind("std::", 0) == 0 ||
-          trimmed.rfind("const ", 0) == 0 || trimmed.rfind("string ", 0) == 0 ||
-          trimmed.rfind("long ", 0) == 0 || trimmed.rfind("unsigned ", 0) == 0 ||
-          trimmed.find('*') != std::string::npos || trimmed.find("FILE") != std::string::npos;
+      bool isDecl = trimmed.find('=') != std::string::npos || trimmed.rfind("int ", 0) == 0 ||
+                    trimmed.rfind("auto ", 0) == 0 || trimmed.rfind("float ", 0) == 0 ||
+                    trimmed.rfind("double ", 0) == 0 || trimmed.rfind("char ", 0) == 0 ||
+                    trimmed.rfind("std::", 0) == 0 || trimmed.rfind("const ", 0) == 0 ||
+                    trimmed.rfind("string ", 0) == 0 || trimmed.rfind("long ", 0) == 0 ||
+                    trimmed.rfind("unsigned ", 0) == 0 || trimmed.find('*') != std::string::npos ||
+                    trimmed.find("FILE") != std::string::npos;
       if (!isDecl) {
         std::string tmpT, tmpN, tmpV;
-        if (parseDeclaration(trimmed + ";", tmpT, tmpN, tmpV)) isDecl = true;
+        if (parseDeclaration(trimmed + ";", tmpT, tmpN, tmpV))
+          isDecl = true;
       }
       if (isDecl) {
         toEval = trimmed + ";\n";
@@ -872,8 +955,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
   auto e = interp_->ParseAndExecute(toEval, &V);
   if (e) {
     std::string msg;
-    llvm::handleAllErrors(
-        std::move(e), [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
+    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
     if (needsSemi) {
       clang::Value V2;
       auto e2 = interp_->ParseAndExecute(sanitized, &V2);
@@ -888,7 +970,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
         }
         return true;
       }
-      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
+      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
     }
     if (trimmed[0] != '#' && !needsSemi && !trimmed.empty() && trimmed.back() != ';' &&
         trimmed.back() != '}' && trimmed.back() != '{') {
@@ -906,17 +988,15 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
         }
         return true;
       }
-      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB) {});
+      llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
     }
     // Auto-upgrade C++ standard if error indicates need for C++20/23 (e.g. header requires it)
     {
       utils::StdVersion higher = utils::StdVersion::Cpp17;
       if (msg.find("source_location") != std::string::npos ||
           msg.find("std::format") != std::string::npos ||
-          msg.find("concept") != std::string::npos ||
-          msg.find("requires") != std::string::npos ||
-          msg.find("co_await") != std::string::npos ||
-          msg.find("char8_t") != std::string::npos ||
+          msg.find("concept") != std::string::npos || msg.find("requires") != std::string::npos ||
+          msg.find("co_await") != std::string::npos || msg.find("char8_t") != std::string::npos ||
           msg.find("consteval") != std::string::npos ||
           msg.find("only available with '-std=c++20'") != std::string::npos ||
           msg.find("is only available from C++20") != std::string::npos) {
@@ -933,24 +1013,31 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           if (!e2) {
             if (V2.isValid()) {
               bool shouldPrint2 = true;
-              if (V2.isVoid()) shouldPrint2 = false;
-              else if (trimmed.find("std::cout") != std::string::npos) shouldPrint2 = false;
-              if (shouldPrint2) { highPrecisionDump(V2); std::cout << "\n"; }
+              if (V2.isVoid())
+                shouldPrint2 = false;
+              else if (trimmed.find("std::cout") != std::string::npos)
+                shouldPrint2 = false;
+              if (shouldPrint2) {
+                highPrecisionDump(V2);
+                std::cout << "\n";
+              }
             }
             if (!sanitized.empty()) {
               history_.push_back(sanitized);
               trackVariable(sanitized);
             }
-            std::cout << "[auto-upgraded to " << utils::VersionDetector::toString(higher) << " for header compatibility]\n";
+            std::cout << "[auto-upgraded to " << utils::VersionDetector::toString(higher)
+                      << " for header compatibility]\n";
             return true;
           }
-          llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){});
+          llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
         }
       }
     }
     if (msg.find("file not found") != std::string::npos) {
       if (msg.find("/np'") != std::string::npos || msg.find("/np\"") != std::string::npos) {
-        msg += "\n[hint] Did you mean \"/.../include/np/np.hpp\"? Use -I <path-to-Numpy-C-API>/include and #include \"np/np.hpp\" or #include <np/np.hpp>";
+        msg += "\n[hint] Did you mean \"/.../include/np/np.hpp\"? Use -I "
+               "<path-to-Numpy-C-API>/include and #include \"np/np.hpp\" or #include <np/np.hpp>";
       }
       if (sanitized.find("#include") != std::string::npos) {
         size_t q1 = sanitized.find('"');
@@ -961,13 +1048,19 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           bool exists = std::filesystem::exists(incPath, ec);
           bool isDir = !ec && std::filesystem::is_directory(incPath, ec);
           if (!ec && exists && isDir) {
-            msg += "\n[hint] '" + incPath + "' is a directory, not a file. Try including a specific header like '" + incPath + "/np.hpp' or use -I with <np/...>";
+            msg += "\n[hint] '" + incPath +
+                   "' is a directory, not a file. Try including a specific header like '" +
+                   incPath + "/np.hpp' or use -I with <np/...>";
             msg += "\n[hint] Available headers in " + incPath + ": ";
             int cnt = 0;
             std::error_code ec2;
             for (auto &entry : std::filesystem::directory_iterator(incPath, ec2)) {
-              if (ec2) break;
-              if (cnt++ >= 5) { msg += "..."; break; }
+              if (ec2)
+                break;
+              if (cnt++ >= 5) {
+                msg += "...";
+                break;
+              }
               msg += entry.path().filename().string() + " ";
             }
           }
@@ -980,10 +1073,13 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
         auto it = variables_.find(name);
         if (it != variables_.end()) {
           if (it->second.first == type && it->second.second == value) {
-            std::cout << "[ignored: redefinition of '" << name << "' with same value " << value << "]\n";
+            std::cout << "[ignored: redefinition of '" << name << "' with same value " << value
+                      << "]\n";
             return true;
           } else {
-            err = "redefinition of '" + name + "' with different value (previous: " + it->second.second + " [" + it->second.first + "] vs new: " + value + " [" + type + "])";
+            err = "redefinition of '" + name +
+                  "' with different value (previous: " + it->second.second + " [" +
+                  it->second.first + "] vs new: " + value + " [" + type + "])";
             err += " [hint: same name & same value is allowed and ignored]";
             return false;
           }
@@ -992,8 +1088,10 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     }
     // Handle Numpy-C-API ProxyBase issues without modifying headers (C++23)
     if (msg.find("ProxyBase") != std::string::npos || msg.find("convert_to") != std::string::npos ||
-        msg.find("fixed_source") != std::string::npos || msg.find("vector<bool>") != std::string::npos) {
-      msg += "\n[hint] Numpy-C-API ProxyBase/vector<bool> issue – header uses C++23 and boost::multiprecision. "
+        msg.find("fixed_source") != std::string::npos ||
+        msg.find("vector<bool>") != std::string::npos) {
+      msg += "\n[hint] Numpy-C-API ProxyBase/vector<bool> issue – header uses C++23 and "
+             "boost::multiprecision. "
              "Try: cpp-repl -std=c++23 -I <path-to-Numpy-C-API>/include "
              "or use static_cast<np::bigint>(proxy).convert_to<double>() and "
              "static_cast<np::bigint>(a[n]) for ap*a[n]";
@@ -1014,9 +1112,14 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
         if (!e2) {
           if (V2.isValid()) {
             bool shouldPrint = true;
-            if (V2.isVoid()) shouldPrint = false;
-            else if (trimmed.find("std::cout") != std::string::npos) shouldPrint = false;
-            if (shouldPrint) { highPrecisionDump(V2); std::cout << "\n"; }
+            if (V2.isVoid())
+              shouldPrint = false;
+            else if (trimmed.find("std::cout") != std::string::npos)
+              shouldPrint = false;
+            if (shouldPrint) {
+              highPrecisionDump(V2);
+              std::cout << "\n";
+            }
           }
           if (!sanitized.empty()) {
             history_.push_back(sanitized);
@@ -1025,8 +1128,10 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           std::cout << "[auto-included <bits/stdc++.h> for std:: support]\n";
           return true;
         }
-        llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &EIB){ msg = EIB.message(); });
-        msg += "\n[hint] tried auto-including <bits/stdc++.h> but still failed; try explicit #include <...> or check std:: usage";
+        llvm::handleAllErrors(std::move(e2),
+                              [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
+        msg += "\n[hint] tried auto-including <bits/stdc++.h> but still failed; try explicit "
+               "#include <...> or check std:: usage";
       }
     }
     // JIT poison recovery: Symbols not found / Failed to materialize symbols
@@ -1035,15 +1140,19 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
         msg.find("__orc_init_func") != std::string::npos) {
       // Attempt to undo the poisoned increment; clang::Interpreter::Undo(1) often clears it
       if (auto ue = interp_->Undo(1)) {
-        llvm::handleAllErrors(std::move(ue), [&](llvm::ErrorInfoBase &EIB){});
+        llvm::handleAllErrors(std::move(ue), [&](llvm::ErrorInfoBase &) {});
       }
       // Also pop last history if it was the poisoned one (if any)
-      // No push yet for this failed eval, so nothing to pop from history, but prior poisoned def may be in history
-      // Offer hint and suggest :reset if still broken
+      // No push yet for this failed eval, so nothing to pop from history, but prior poisoned def
+      // may be in history Offer hint and suggest :reset if still broken
       if (msg.find("Failed to materialize") != std::string::npos) {
-        msg += "\n[hint] JIT poisoned — auto-undo attempted. If subsequent #include still fails, run :reset or restart. Original error was likely a bad template (e.g., std::forward without <T>).";
+        msg += "\n[hint] JIT poisoned — auto-undo attempted. If subsequent #include still fails, "
+               "run :reset or restart. Original error was likely a bad template (e.g., "
+               "std::forward without <T>).";
       } else {
-        msg += "\n[hint] Symbols not found — likely a failed template instantiation (e.g., std::forward(x) should be std::forward<T>(x)). Auto-undo attempted; try :undo or :reset.";
+        msg += "\n[hint] Symbols not found — likely a failed template instantiation (e.g., "
+               "std::forward(x) should be std::forward<T>(x)). Auto-undo attempted; try :undo or "
+               ":reset.";
       }
     }
     err = msg;
@@ -1076,8 +1185,7 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           clang::Value dummy;
           auto e2 = interp_->ParseAndExecute(printCode, &dummy);
           if (e2)
-            llvm::handleAllErrors(std::move(e2),
-                                  [&](llvm::ErrorInfoBase &EIB) {});
+            llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
           shouldPrint = false; // already printed via cout
         }
       }
@@ -1090,28 +1198,19 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     std::string t = trim_copy(sanitized);
     if (!t.empty() && t.back() == ';') {
       bool likelyExpr = true;
-      if (t.find("int ") != std::string::npos ||
-          t.find("auto ") != std::string::npos ||
-          t.find("double ") != std::string::npos ||
-          t.find("float ") != std::string::npos ||
-          t.find("char ") != std::string::npos ||
-          t.find("long ") != std::string::npos ||
-          t.find("unsigned ") != std::string::npos ||
-          t.find("const ") != std::string::npos ||
-          t.find("std::") != std::string::npos ||
-          t.find("bool ") != std::string::npos ||
-          t.find("=") != std::string::npos ||
-          t.find("#include") != std::string::npos || t.find("for") == 0 ||
-          t.find("while") == 0 || t.find("if") == 0 ||
-          t.find("struct ") != std::string::npos ||
-          t.find("class ") != std::string::npos ||
-          t.find("using ") != std::string::npos ||
-          t.find("std::cout") != std::string::npos ||
+      if (t.find("int ") != std::string::npos || t.find("auto ") != std::string::npos ||
+          t.find("double ") != std::string::npos || t.find("float ") != std::string::npos ||
+          t.find("char ") != std::string::npos || t.find("long ") != std::string::npos ||
+          t.find("unsigned ") != std::string::npos || t.find("const ") != std::string::npos ||
+          t.find("std::") != std::string::npos || t.find("bool ") != std::string::npos ||
+          t.find("=") != std::string::npos || t.find("#include") != std::string::npos ||
+          t.find("for") == 0 || t.find("while") == 0 || t.find("if") == 0 ||
+          t.find("struct ") != std::string::npos || t.find("class ") != std::string::npos ||
+          t.find("using ") != std::string::npos || t.find("std::cout") != std::string::npos ||
           t.find("printf") != std::string::npos)
         likelyExpr = false;
       std::string stripped = rtrim_semi(sanitized);
-      if (likelyExpr && stripped.find(';') == std::string::npos &&
-          stripped.size() < 200) {
+      if (likelyExpr && stripped.find(';') == std::string::npos && stripped.size() < 200) {
         clang::Value V2;
         auto e2 = interp_->ParseAndExecute(stripped, &V2);
         if (!e2 && V2.isValid()) {
@@ -1123,20 +1222,17 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
           if (typeStr2.find("cpp_int") != std::string::npos ||
               typeStr2.find("mpz_int") != std::string::npos ||
               typeStr2.find("boost::multiprecision") != std::string::npos) {
-            std::string printCode =
-                "std::cout << (" + stripped + ") << std::endl;";
+            std::string printCode = "std::cout << (" + stripped + ") << std::endl;";
             clang::Value dummy;
             auto e3 = interp_->ParseAndExecute(printCode, &dummy);
             if (e3)
-              llvm::handleAllErrors(std::move(e3),
-                                    [&](llvm::ErrorInfoBase &EIB) {});
+              llvm::handleAllErrors(std::move(e3), [&](llvm::ErrorInfoBase &) {});
           } else {
             highPrecisionDump(V2);
             std::cout << "\n";
           }
         } else if (e2)
-          llvm::handleAllErrors(std::move(e2),
-                                [&](llvm::ErrorInfoBase &EIB) {});
+          llvm::handleAllErrors(std::move(e2), [&](llvm::ErrorInfoBase &) {});
       }
     }
   }
@@ -1147,10 +1243,10 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
   return true;
 }
 
-bool Interpreter::eval(const std::string &code, std::string &err,
-                       bool &incomplete) {
+bool Interpreter::eval(const std::string &code, std::string &err, bool &incomplete) {
   incomplete = utils::IncompleteDetector::isIncomplete(code);
-  if (incomplete) return true;
+  if (incomplete)
+    return true;
   return eval(code, err);
 }
 
@@ -1170,8 +1266,7 @@ bool Interpreter::loadLibrary(const std::string &path, std::string &err) {
     return false;
   }
   if (auto e = interp_->LoadDynamicLibrary(path.c_str())) {
-    llvm::handleAllErrors(
-        std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   return true;
@@ -1182,8 +1277,7 @@ bool Interpreter::undo(unsigned n, std::string &err) {
     return false;
   }
   if (auto e = interp_->Undo(n)) {
-    llvm::handleAllErrors(
-        std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
+    llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   while (n-- > 0 && !history_.empty())
@@ -1224,52 +1318,91 @@ void Interpreter::dump() const {
 void Interpreter::stackLayout() const {
   bool useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
   const char *term = getenv("TERM");
-  if (useColor && term && std::string(term) == "dumb") useColor = false;
-  auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+  if (useColor && term && std::string(term) == "dumb")
+    useColor = false;
+  auto col = [&](const char *c) { return useColor ? std::string(c) : std::string(""); };
   auto rst = col("\033[0m");
   auto cyan = col("\033[36m");
   auto grey = col("\033[90m");
   auto yellow = col("\033[33m");
   auto green = col("\033[32m");
   std::cout << cyan << "┌─[stack]─ Current Layout ─────────────────────" << rst << "\n";
-  std::cout << grey << "│ " << rst << "Version: " << yellow << utils::VersionDetector::toString(currentVersion_) << rst << " (" << grey << utils::VersionDetector::toFlag(currentVersion_) << rst << ")\n";
+  std::cout << grey << "│ " << rst << "Version: " << yellow
+            << utils::VersionDetector::toString(currentVersion_) << rst << " (" << grey
+            << utils::VersionDetector::toFlag(currentVersion_) << rst << ")\n";
   std::cout << grey << "│ " << rst << "History: " << green << history_.size() << rst << " inputs";
-  if (!history_.empty()) std::cout << "  " << grey << "(last: " << history_.back().substr(0, 60) << (history_.back().size()>60?"...":"") << ")" << rst;
+  if (!history_.empty())
+    std::cout << "  " << grey << "(last: " << history_.back().substr(0, 60)
+              << (history_.back().size() > 60 ? "..." : "") << ")" << rst;
   std::cout << "\n";
-  std::cout << grey << "│ " << rst << "Variables: " << green << variables_.size() << rst << " tracked";
-  if (tracker_) std::cout << " (" << tracker_->size() << " via tracker)";
+  std::cout << grey << "│ " << rst << "Variables: " << green << variables_.size() << rst
+            << " tracked";
+  if (tracker_)
+    std::cout << " (" << tracker_->size() << " via tracker)";
   std::cout << "\n";
   for (auto &kv : variables_) {
-    std::cout << grey << "│   • " << rst << cyan << kv.second.first << rst << " " << yellow << kv.first << rst;
-    if (!kv.second.second.empty()) std::cout << " = " << green << kv.second.second << rst;
-    else std::cout << " " << grey << "[declared]" << rst;
+    std::cout << grey << "│   • " << rst << cyan << kv.second.first << rst << " " << yellow
+              << kv.first << rst;
+    if (!kv.second.second.empty())
+      std::cout << " = " << green << kv.second.second << rst;
+    else
+      std::cout << " " << grey << "[declared]" << rst;
     std::cout << "\n";
   }
-  if (variables_.empty()) std::cout << grey << "│   (none)" << rst << "\n";
-  std::cout << grey << "│ " << rst << "Includes: " << (includePaths_.empty() ? grey + "(none)" + rst : "");
-  for (auto &p : includePaths_) std::cout << (includePaths_.size()?"\n"+grey+"│   • "+rst:"") << p;
-  if (!includePaths_.empty()) std::cout << "\n";
-  else std::cout << "\n";
-  std::cout << grey << "│ " << rst << "Library paths: " << (libraryPaths_.empty() ? grey + "(none)" + rst : "");
-  for (auto &p : libraryPaths_) std::cout << (libraryPaths_.size()?"\n"+grey+"│   • "+rst:"") << p;
-  if (!libraryPaths_.empty()) std::cout << "\n";
-  else std::cout << "\n";
-  std::cout << grey << "│ " << rst << "Libraries: " << (libraries_.empty() ? grey + "(none)" + rst : "");
-  for (auto &l : libraries_) std::cout << (libraries_.size()?"\n"+grey+"│   • "+rst:"") << l;
-  if (!libraries_.empty()) std::cout << "\n";
-  else std::cout << "\n";
-  std::cout << grey << "│ " << rst << "Defines: " << (defines_.empty() ? grey + "(none)" + rst : "");
-  for (auto &d : defines_) std::cout << (defines_.size()?"\n"+grey+"│   • "+rst:"") << d;
-  if (!defines_.empty()) std::cout << "\n";
-  else std::cout << "\n";
-  std::cout << grey << "│ " << rst << "StdLib: " << (stdLibIncluded_ ? green + "included (bits/stdc++.h)" + rst : grey + "not yet included" + rst) << "\n";
-  std::cout << grey << "│ " << rst << "BigInt: " << (utils::BigIntSupport::isAvailable() ? green + "yes (boost::multiprecision::cpp_int)" + rst : grey + "no" + rst) << "\n";
+  if (variables_.empty())
+    std::cout << grey << "│   (none)" << rst << "\n";
+  std::cout << grey << "│ " << rst
+            << "Includes: " << (includePaths_.empty() ? grey + "(none)" + rst : "");
+  for (auto &p : includePaths_)
+    std::cout << (includePaths_.size() ? "\n" + grey + "│   • " + rst : "") << p;
+  if (!includePaths_.empty())
+    std::cout << "\n";
+  else
+    std::cout << "\n";
+  std::cout << grey << "│ " << rst
+            << "Library paths: " << (libraryPaths_.empty() ? grey + "(none)" + rst : "");
+  for (auto &p : libraryPaths_)
+    std::cout << (libraryPaths_.size() ? "\n" + grey + "│   • " + rst : "") << p;
+  if (!libraryPaths_.empty())
+    std::cout << "\n";
+  else
+    std::cout << "\n";
+  std::cout << grey << "│ " << rst
+            << "Libraries: " << (libraries_.empty() ? grey + "(none)" + rst : "");
+  for (auto &l : libraries_)
+    std::cout << (libraries_.size() ? "\n" + grey + "│   • " + rst : "") << l;
+  if (!libraries_.empty())
+    std::cout << "\n";
+  else
+    std::cout << "\n";
+  std::cout << grey << "│ " << rst
+            << "Defines: " << (defines_.empty() ? grey + "(none)" + rst : "");
+  for (auto &d : defines_)
+    std::cout << (defines_.size() ? "\n" + grey + "│   • " + rst : "") << d;
+  if (!defines_.empty())
+    std::cout << "\n";
+  else
+    std::cout << "\n";
+  std::cout << grey << "│ " << rst << "StdLib: "
+            << (stdLibIncluded_ ? green + "included (bits/stdc++.h)" + rst
+                                : grey + "not yet included" + rst)
+            << "\n";
+  std::cout << grey << "│ " << rst << "BigInt: "
+            << (utils::BigIntSupport::isAvailable()
+                    ? green + "yes (boost::multiprecision::cpp_int)" + rst
+                    : grey + "no" + rst)
+            << "\n";
   std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
 }
 bool Interpreter::stackPop(unsigned n, std::string &err) {
-  if (n == 0) n = 1;
-  if (n > history_.size()) n = static_cast<unsigned>(history_.size());
-  if (n == 0) { err = "stack empty"; return false; }
+  if (n == 0)
+    n = 1;
+  if (n > history_.size())
+    n = static_cast<unsigned>(history_.size());
+  if (n == 0) {
+    err = "stack empty";
+    return false;
+  }
   return undo(n, err);
 }
 bool Interpreter::stackPush(const std::string &code, std::string &err) {
@@ -1282,7 +1415,7 @@ bool Interpreter::stackClear(std::string &err) {
   if (!history_.empty()) {
     unsigned n = static_cast<unsigned>(history_.size());
     if (auto e = interp_->Undo(n)) {
-      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB){ err = EIB.message(); });
+      llvm::handleAllErrors(std::move(e), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
       // Fallback to reset if undo fails
       reset(err);
       return err.empty();
@@ -1304,16 +1437,25 @@ bool Interpreter::stackRemove(const std::string &name, std::string &err) {
   if (it == variables_.end()) {
     // Also check tracker
     auto found = tracker_->find(name);
-    if (!found) { err = "variable '" + name + "' not found in stack"; return false; }
+    if (!found) {
+      err = "variable '" + name + "' not found in stack";
+      return false;
+    }
   }
   // Find last history entry that defines this variable and undo from there
   // For simplicity, find index of last defining entry and rebuild without it
   int idx = -1;
-  for (int i = (int)history_.size()-1; i >=0; --i) {
+  for (int i = static_cast<int>(history_.size()) - 1; i >= 0; --i) {
     std::string type, n, v;
-    if (parseDeclaration(history_[i], type, n, v) && n == name) { idx = i; break; }
+    if (parseDeclaration(history_[i], type, n, v) && n == name) {
+      idx = i;
+      break;
+    }
     std::string aN, aV;
-    if (parseAssignment(history_[i], aN, aV) && aN == name) { idx = i; break; }
+    if (parseAssignment(history_[i], aN, aV) && aN == name) {
+      idx = i;
+      break;
+    }
   }
   if (idx == -1) {
     // Variable is tracked but not in history (maybe from preamble) — just forget
@@ -1323,7 +1465,9 @@ bool Interpreter::stackRemove(const std::string &name, std::string &err) {
   }
   // Rebuild history without idx
   std::vector<std::string> newHist;
-  for (size_t i=0;i<history_.size();++i) if ((int)i != idx) newHist.push_back(history_[i]);
+  for (size_t i = 0; i < history_.size(); ++i)
+    if (static_cast<int>(i) != idx)
+      newHist.push_back(history_[i]);
   std::string local;
   interp_.reset();
   initialized_ = false;
@@ -1357,7 +1501,8 @@ bool Interpreter::stackSwap(size_t i, size_t j, std::string &err) {
     err = "index out of range (history size " + std::to_string(history_.size()) + ")";
     return false;
   }
-  if (i == j) return true;
+  if (i == j)
+    return true;
   std::vector<std::string> newHist = history_;
   std::swap(newHist[i], newHist[j]);
   std::string local;
@@ -1381,11 +1526,15 @@ bool Interpreter::stackSwap(size_t i, size_t j, std::string &err) {
   }
   return true;
 }
-bool Interpreter::getSymbolAddress(const std::string &name, uintptr_t &addr, std::string &err) const {
-  if (!initialized_ || !interp_) { err = "REPL not initialized"; return false; }
+bool Interpreter::getSymbolAddress(const std::string &name, uintptr_t &addr,
+                                   std::string &err) const {
+  if (!initialized_ || !interp_) {
+    err = "REPL not initialized";
+    return false;
+  }
   auto sym = interp_->getSymbolAddress(name);
   if (!sym) {
-    llvm::handleAllErrors(sym.takeError(), [&](llvm::ErrorInfoBase &EIB){ err = EIB.message(); });
+    llvm::handleAllErrors(sym.takeError(), [&](llvm::ErrorInfoBase &EIB) { err = EIB.message(); });
     return false;
   }
   // LLVM 22 returns Expected<ExecutorAddr> with getValue() giving uint64_t
@@ -1395,41 +1544,49 @@ bool Interpreter::getSymbolAddress(const std::string &name, uintptr_t &addr, std
 void Interpreter::heapLayout() const {
   bool useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
   const char *term = getenv("TERM");
-  if (useColor && term && std::string(term) == "dumb") useColor = false;
-  auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+  if (useColor && term && std::string(term) == "dumb")
+    useColor = false;
+  auto col = [&](const char *c) { return useColor ? std::string(c) : std::string(""); };
   auto rst = col("\033[0m");
   auto cyan = col("\033[36m");
   auto grey = col("\033[90m");
   auto yellow = col("\033[33m");
   auto green = col("\033[32m");
   std::cout << cyan << "┌─[heap]─ Heap Layout ────────────────────────" << rst << "\n";
-  void* heapTop = sbrk(0);
-  std::cout << grey << "│ " << rst << "Heap top (sbrk): " << yellow << heapTop << rst << " (" << (uintptr_t)heapTop << ")\n";
+  void *heapTop = sbrk(0);
+  std::cout << grey << "│ " << rst << "Heap top (sbrk): " << yellow << heapTop << rst << " ("
+            << (uintptr_t)heapTop << ")\n";
 #ifdef __GLIBC__
   struct mallinfo2 mi = mallinfo2();
-  std::cout << grey << "│ " << rst << "Arena: " << green << mi.arena << rst << " bytes  Ordblks: " << mi.ordblks << "  Hblks: " << mi.hblks << "\n";
-  std::cout << grey << "│ " << rst << "Uordblks (in-use): " << yellow << mi.uordblks << rst << "  Fordblks (free): " << mi.fordblks << "\n";
-  std::cout << grey << "│ " << rst << "Keepcost: " << mi.keepcost << "  Hblkhd: " << mi.hblkhd << "\n";
+  std::cout << grey << "│ " << rst << "Arena: " << green << mi.arena << rst
+            << " bytes  Ordblks: " << mi.ordblks << "  Hblks: " << mi.hblks << "\n";
+  std::cout << grey << "│ " << rst << "Uordblks (in-use): " << yellow << mi.uordblks << rst
+            << "  Fordblks (free): " << mi.fordblks << "\n";
+  std::cout << grey << "│ " << rst << "Keepcost: " << mi.keepcost << "  Hblkhd: " << mi.hblkhd
+            << "\n";
 #endif
   struct rusage ru;
   if (getrusage(RUSAGE_SELF, &ru) == 0) {
-    std::cout << grey << "│ " << rst << "Max RSS: " << green << ru.ru_maxrss << " KB" << rst << "  Minflt: " << ru.ru_minflt << "  Majflt: " << ru.ru_majflt << "\n";
+    std::cout << grey << "│ " << rst << "Max RSS: " << green << ru.ru_maxrss << " KB" << rst
+              << "  Minflt: " << ru.ru_minflt << "  Majflt: " << ru.ru_majflt << "\n";
   }
   std::ifstream maps("/proc/self/maps");
   if (maps) {
     std::cout << grey << "│ " << rst << "Memory maps (first 20):\n";
     std::string line;
-    int cnt=0;
+    int cnt = 0;
     while (std::getline(maps, line) && cnt < 20) {
       std::cout << grey << "│   " << rst << line << "\n";
       ++cnt;
     }
-    if (cnt==20) std::cout << grey << "│   ... (truncated, see /proc/self/maps)" << rst << "\n";
+    if (cnt == 20)
+      std::cout << grey << "│   ... (truncated, see /proc/self/maps)" << rst << "\n";
   } else {
     std::cout << grey << "│ " << rst << "No /proc/self/maps (non-Linux)\n";
   }
   if (initialized_ && interp_) {
-    std::cout << grey << "│ " << rst << "JIT: " << green << "LLJIT (in-process)" << rst << "  History: " << history_.size() << " entries\n";
+    std::cout << grey << "│ " << rst << "JIT: " << green << "LLJIT (in-process)" << rst
+              << "  History: " << history_.size() << " entries\n";
   }
   std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
 }
@@ -1437,9 +1594,13 @@ bool Interpreter::trace(const std::string &code, std::string &output, std::strin
   std::string tmpFile = "/tmp/cpp-repl-trace-" + std::to_string(getpid()) + ".cpp";
   {
     std::ofstream out(tmpFile);
-    if (!out) { err = "cannot create temp file for trace"; return false; }
+    if (!out) {
+      err = "cannot create temp file for trace";
+      return false;
+    }
     out << code;
-    if (code.back() != '\n') out << "\n";
+    if (code.back() != '\n')
+      out << "\n";
   }
   if (system("which strace > /dev/null 2>&1") != 0) {
     err = "strace not found (install strace: sudo apt install strace)";
@@ -1448,14 +1609,24 @@ bool Interpreter::trace(const std::string &code, std::string &output, std::strin
   }
   std::string traceLog = "/tmp/cpp-repl-trace-" + std::to_string(getpid()) + ".log";
   std::string escCode = code;
-  size_t pos=0;
-  while ((pos = escCode.find('\'', pos)) != std::string::npos) { escCode.replace(pos, 1, "'\\''"); pos+=4; }
-  std::string cmd = "strace -f -e trace=all -o " + traceLog + " -s 256 timeout 5 ./build/cpp-repl --no-interactive -e '" + escCode + "' > /dev/null 2>&1; cat " + traceLog + " 2>/dev/null | head -n 100";
+  size_t pos = 0;
+  while ((pos = escCode.find('\'', pos)) != std::string::npos) {
+    escCode.replace(pos, 1, "'\\''");
+    pos += 4;
+  }
+  std::string cmd = "strace -f -e trace=all -o " + traceLog +
+                    " -s 256 timeout 5 ./build/cpp-repl --no-interactive -e '" + escCode +
+                    "' > /dev/null 2>&1; cat " + traceLog + " 2>/dev/null | head -n 100";
   FILE *pipe = popen(cmd.c_str(), "r");
-  if (!pipe) { err = "popen failed for strace"; std::remove(tmpFile.c_str()); return false; }
+  if (!pipe) {
+    err = "popen failed for strace";
+    std::remove(tmpFile.c_str());
+    return false;
+  }
   char buf[4096];
   output.clear();
-  while (fgets(buf, sizeof(buf), pipe)) output += buf;
+  while (fgets(buf, sizeof(buf), pipe))
+    output += buf;
   pclose(pipe);
   std::remove(tmpFile.c_str());
   std::remove(traceLog.c_str());
@@ -1488,55 +1659,68 @@ void Interpreter::reset(std::string &err) {
 }
 void Interpreter::help() const {
   // Show prompt help with color hint when stdout is a tty
-  bool useColor = isatty(STDOUT_FILENO) &&
-                  !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+  bool useColor = isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
   const char *term = getenv("TERM");
-  if (useColor && term && std::string(term) == "dumb") useColor = false;
-  auto col = [&](const char* code)->std::string { return useColor ? code : ""; };
+  if (useColor && term && std::string(term) == "dumb")
+    useColor = false;
+  auto col = [&](const char *code) -> std::string { return useColor ? code : ""; };
   auto rst = col("\033[0m");
   auto cyan = col("\033[36m");
   auto grey = col("\033[90m");
   std::cout << "C++ REPL (LLVM VM, O0, no optimizations) ["
             << utils::VersionDetector::toString(currentVersion_)
             << "]\n"
-               "Prompt: " + cyan + "cpp" + rst + grey + ":" + rst + cyan + utils::VersionDetector::toString(currentVersion_) + rst + grey + " [n] (time " + rst + col("\033[32m") + "✓" + rst + grey + "/" + rst + col("\033[31m") + "✗" + rst + grey + ")" + rst + grey + ">" + rst + "  colored, shows C++ version, input count & last exec time\n"
-               "        use " + grey + "--no-color" + rst + " or " + grey + "NO_COLOR=1" + rst + " to disable, " + grey + "FORCE_COLOR=1" + rst + " to force\n"
-                "Commands:\n"
-               "  :help  :h       show this help\n"
-               "  :quit  :exit :q exit REPL\n"
-               "  :dump           dump accumulated inputs\n"
-               "  :reset          reset interpreter state\n"
-               "  :flush :forget :clearstack :drop  flush stack — clears all definitions (variables no longer exist, can be redefined)\n"
-               "  :flush <var>    (future) forget single variable\n"
-               "  :clear :cls :c  clear output buffer / terminal screen\n"
-               "  :load <file>    load and execute file\n"
-               "  :lib <path>     load dynamic library (absolute or relative)\n"
-               "  :I <path>       add include search path (abs/rel, like -I)\n"
-               "  :L <path>       add library search path (like -L)\n"
-               "  :undo [n]       undo last n inputs (default 1)\n"
-               "  :version        show current C++ version\n"
-               "\n"
-               "Enter C++ code. Supports incremental declarations:\n"
-               "  cpp> int x = 42;\n"
-               "  cpp> x + 1\n"
-               "  cpp> #include <iostream>\n"
-               "       std::cout << \"hi\" << std::endl;\n"
-               "  cpp> int add(int a,int b){return a+b;}\n"
-               "  cpp> add(2,3)\n"
-               "Include/Lib (cmdline & interactive):\n"
-               "  $ cpp-repl -I ./include -I /abs/path -L ./lib -l mylib\n"
-               "  $ cpp-repl --include ./include --library m\n"
-               "  cpp> :I ./include      // add relative include path\n"
-               "  cpp> :I /usr/local/include  // absolute\n"
-               "  cpp> #include \"myheader.h\"  // now found via -I\n"
-               "  cpp> :lib ./lib/mylib.so   // load absolute/relative lib\n"
-               "BigInt: cpp_int / bigint via boost::multiprecision (e.g. "
-               "cpp_int a = cpp_int(\"12345678901234567890\"); a*a)\n"
-               "C++20/23: auto-detects 'concept', 'requires', 'import' etc. "
-               "and switches to -std=c++20/23\n"
-               "\n"
-               "Multiline: unbalanced { ( [ keeps buffering with " + col("\033[33m") + "...>" + rst + " prompt\n"
-               "Timing:  " + grey + "⏱" + rst + " line after each exec + inline in next prompt (e.g. " + grey + "(12.3ms ✓)" + rst + ")\n";
+               "Prompt: " +
+                   cyan + "cpp" + rst + grey + ":" + rst + cyan +
+                   utils::VersionDetector::toString(currentVersion_) + rst + grey + " [n] (time " +
+                   rst + col("\033[32m") + "✓" + rst + grey + "/" + rst + col("\033[31m") + "✗" +
+                   rst + grey + ")" + rst + grey + ">" + rst +
+                   "  colored, shows C++ version, input count & last exec time\n"
+                   "        use " +
+                   grey + "--no-color" + rst + " or " + grey + "NO_COLOR=1" + rst +
+                   " to disable, " + grey + "FORCE_COLOR=1" + rst +
+                   " to force\n"
+                   "Commands:\n"
+                   "  :help  :h       show this help\n"
+                   "  :quit  :exit :q exit REPL\n"
+                   "  :dump           dump accumulated inputs\n"
+                   "  :reset          reset interpreter state\n"
+                   "  :flush :forget :clearstack :drop  flush stack — clears all definitions "
+                   "(variables no longer exist, can be redefined)\n"
+                   "  :flush <var>    (future) forget single variable\n"
+                   "  :clear :cls :c  clear output buffer / terminal screen\n"
+                   "  :load <file>    load and execute file\n"
+                   "  :lib <path>     load dynamic library (absolute or relative)\n"
+                   "  :I <path>       add include search path (abs/rel, like -I)\n"
+                   "  :L <path>       add library search path (like -L)\n"
+                   "  :undo [n]       undo last n inputs (default 1)\n"
+                   "  :version        show current C++ version\n"
+                   "\n"
+                   "Enter C++ code. Supports incremental declarations:\n"
+                   "  cpp> int x = 42;\n"
+                   "  cpp> x + 1\n"
+                   "  cpp> #include <iostream>\n"
+                   "       std::cout << \"hi\" << std::endl;\n"
+                   "  cpp> int add(int a,int b){return a+b;}\n"
+                   "  cpp> add(2,3)\n"
+                   "Include/Lib (cmdline & interactive):\n"
+                   "  $ cpp-repl -I ./include -I /abs/path -L ./lib -l mylib\n"
+                   "  $ cpp-repl --include ./include --library m\n"
+                   "  cpp> :I ./include      // add relative include path\n"
+                   "  cpp> :I /usr/local/include  // absolute\n"
+                   "  cpp> #include \"myheader.h\"  // now found via -I\n"
+                   "  cpp> :lib ./lib/mylib.so   // load absolute/relative lib\n"
+                   "BigInt: cpp_int / bigint via boost::multiprecision (e.g. "
+                   "cpp_int a = cpp_int(\"12345678901234567890\"); a*a)\n"
+                   "C++20/23: auto-detects 'concept', 'requires', 'import' etc. "
+                   "and switches to -std=c++20/23\n"
+                   "\n"
+                   "Multiline: unbalanced { ( [ keeps buffering with " +
+                   col("\033[33m") + "...>" + rst +
+                   " prompt\n"
+                   "Timing:  " +
+                   grey + "⏱" + rst + " line after each exec + inline in next prompt (e.g. " +
+                   grey + "(12.3ms ✓)" + rst + ")\n";
 }
 
 } // namespace interpreter

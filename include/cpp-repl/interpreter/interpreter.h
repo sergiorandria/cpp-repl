@@ -1,12 +1,13 @@
 #pragma once
+#include "cpp-repl/security/sandbox.h"
+#include "cpp-repl/utils/i_variable_tracker.h"
+#include "cpp-repl/utils/version_detector.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "cpp-repl/security/sandbox.h"
-#include "cpp-repl/utils/i_variable_tracker.h"
-#include "cpp-repl/utils/version_detector.h"
 
 namespace clang {
 class Interpreter;
@@ -55,19 +56,18 @@ public:
    * @param err Output error.
    * @return true on success.
    */
-  bool init(utils::StdVersion version,
-            const std::vector<std::string> &includePaths,
-            const std::vector<std::string> &defines,
-            const std::vector<std::string> &libraryPaths,
-            const std::vector<std::string> &libraries,
-            std::string &err);
+  bool init(utils::StdVersion version, const std::vector<std::string> &includePaths,
+            const std::vector<std::string> &defines, const std::vector<std::string> &libraryPaths,
+            const std::vector<std::string> &libraries, std::string &err);
   /** @brief Init with version only. */
   bool init(utils::StdVersion version, std::string &err);
   /** @brief Init with C++23 default. */
-  bool init(std::string &err) { return init(utils::StdVersion::Cpp23, err); }
+  bool init(std::string &err) {
+    return init(utils::StdVersion::Cpp23, err);
+  }
   /** @brief Init with includes/defines and C++23 default. */
-  bool init(const std::vector<std::string> &includePaths,
-            const std::vector<std::string> &defines, std::string &err) {
+  bool init(const std::vector<std::string> &includePaths, const std::vector<std::string> &defines,
+            std::string &err) {
     return init(utils::StdVersion::Cpp23, includePaths, defines, err);
   }
 
@@ -155,9 +155,13 @@ public:
   void help() const;
 
   /** @brief Number of history entries. */
-  size_t historySize() const { return history_.size(); }
+  size_t historySize() const {
+    return history_.size();
+  }
   /** @brief Current C++ standard. */
-  utils::StdVersion currentVersion() const { return currentVersion_; }
+  utils::StdVersion currentVersion() const {
+    return currentVersion_;
+  }
 
 private:
   /** @brief Ensure at least the needed C++ version, re-init if higher. */
@@ -171,11 +175,10 @@ private:
   /** @brief Track variable declarations for redefinition checks. */
   void trackVariable(const std::string &code);
   /** @brief Parse a declaration into type/name/value. */
-  bool parseDeclaration(const std::string &code, std::string &type,
-                        std::string &name, std::string &value);
+  bool parseDeclaration(const std::string &code, std::string &type, std::string &name,
+                        std::string &value);
   /** @brief Parse an assignment into name/value. */
-  bool parseAssignment(const std::string &code, std::string &name,
-                       std::string &value);
+  bool parseAssignment(const std::string &code, std::string &name, std::string &value);
   /** @brief Normalize a value string for comparison. */
   std::string normalizeValue(const std::string &v);
   /** @brief Ensure standard library is available (bits/stdc++.h). */

@@ -14,18 +14,18 @@ namespace cli {
  * @brief Parsed command-line options.
  */
 struct Options {
-  bool showScaffold = false; ///< Show low-level VM IR demo.
-  bool noInteractive = false; ///< Exit after -e/file execution.
-  bool showHelp = false; ///< Print help.
-  bool showVersion = false; ///< Print version.
-  bool noColor = false; ///< Disable colored prompt/timing.
-  std::vector<std::string> execCodes; ///< Code from -e flags.
-  std::vector<std::string> files; ///< Input files.
+  bool showScaffold = false;             ///< Show low-level VM IR demo.
+  bool noInteractive = false;            ///< Exit after -e/file execution.
+  bool showHelp = false;                 ///< Print help.
+  bool showVersion = false;              ///< Print version.
+  bool noColor = false;                  ///< Disable colored prompt/timing.
+  std::vector<std::string> execCodes;    ///< Code from -e flags.
+  std::vector<std::string> files;        ///< Input files.
   std::vector<std::string> includePaths; ///< Include paths (-I).
   std::vector<std::string> libraryPaths; ///< Library search paths (-L).
-  std::vector<std::string> libraries; ///< Libraries to link (-l).
-  std::vector<std::string> defines; ///< Macro definitions (-D).
-  std::vector<std::string> extraArgs; ///< Extra clang args.
+  std::vector<std::string> libraries;    ///< Libraries to link (-l).
+  std::vector<std::string> defines;      ///< Macro definitions (-D).
+  std::vector<std::string> extraArgs;    ///< Extra clang args.
 };
 
 /**

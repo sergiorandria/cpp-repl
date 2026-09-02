@@ -1,9 +1,10 @@
 #pragma once
+#include "cpp-repl/utils/result.h"
+
+#include <functional>
 #include <memory>
 #include <string>
-#include <functional>
 #include <unordered_map>
-#include "cpp-repl/utils/result.h"
 
 namespace cpprepl {
 namespace repl {
@@ -26,6 +27,7 @@ public:
   bool has(const std::string &name) const;
   utils::Result<void> execute(const std::string &line) const;
   void help() const;
+
 private:
   std::unordered_map<std::string, std::unique_ptr<ICommand>> cmds_;
 };

@@ -1,7 +1,8 @@
 #pragma once
-#include <string>
-#include "cpp-repl/utils/result.h"
 #include "cpp-repl/config/config.h"
+#include "cpp-repl/utils/result.h"
+
+#include <string>
 
 namespace cpprepl {
 namespace interpreter {

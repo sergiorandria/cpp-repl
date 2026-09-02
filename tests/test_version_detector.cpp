@@ -1,8 +1,9 @@
-#include <gtest/gtest.h>
 #include "cpp-repl/utils/version_detector.h"
 
-using cpprepl::utils::VersionDetector;
+#include <gtest/gtest.h>
+
 using cpprepl::utils::StdVersion;
+using cpprepl::utils::VersionDetector;
 
 TEST(VersionDetector, DefaultIsCpp17) {
   EXPECT_EQ(VersionDetector::detect("int x=42;"), StdVersion::Cpp17);

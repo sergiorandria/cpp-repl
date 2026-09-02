@@ -1,4 +1,5 @@
 #include "cpp-repl/repl/i_command.h"
+
 #include <iostream>
 
 namespace cpprepl {
@@ -18,12 +19,15 @@ utils::Result<void> CommandRegistry::execute(const std::string &line) const {
   // Extract command name: first word after ':'
   std::string t = line;
   size_t a = t.find_first_not_of(" \t\r\n");
-  if (a != std::string::npos) t = t.substr(a);
-  else t = "";
-  if (t.empty() || t[0] != ':') return utils::Result<void>::failure("not a command");
+  if (a != std::string::npos)
+    t = t.substr(a);
+  else
+    t = "";
+  if (t.empty() || t[0] != ':')
+    return utils::Result<void>::failure("not a command");
   size_t sp = t.find(' ');
   std::string name = (sp == std::string::npos) ? t : t.substr(0, sp);
-  std::string args = (sp == std::string::npos) ? "" : t.substr(sp+1);
+  std::string args = (sp == std::string::npos) ? "" : t.substr(sp + 1);
   auto it = cmds_.find(name);
   if (it == cmds_.end()) {
     return utils::Result<void>::failure("unknown command: " + line + " (try :help)");

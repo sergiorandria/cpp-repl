@@ -64,8 +64,12 @@ public:
    */
   bool eval(const std::string &code, std::string &err, bool &incomplete);
 
-  size_t historySize() const { return history_.size(); }
-  void clearHistory() { history_.clear(); }
+  size_t historySize() const {
+    return history_.size();
+  }
+  void clearHistory() {
+    history_.clear();
+  }
 
 private:
   std::unique_ptr<clang::Interpreter> interp_;

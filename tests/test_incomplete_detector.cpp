@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "cpp-repl/utils/incomplete_detector.h"
+
+#include <gtest/gtest.h>
 
 using cpprepl::utils::IncompleteDetector;
 

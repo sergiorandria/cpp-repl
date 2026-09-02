@@ -18,9 +18,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
-#include <cstdlib>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -53,10 +53,9 @@ int main(int argc, char **argv) {
     auto ctx = std::make_unique<llvm::LLVMContext>();
     auto mod = std::make_unique<llvm::Module>("scaffold", *ctx);
     llvm::IRBuilder<> builder(*ctx);
-    llvm::FunctionType *FT =
-        llvm::FunctionType::get(builder.getInt32Ty(), false);
-    llvm::Function *F = llvm::Function::Create(
-        FT, llvm::Function::ExternalLinkage, "scaffold_fn", mod.get());
+    llvm::FunctionType *FT = llvm::FunctionType::get(builder.getInt32Ty(), false);
+    llvm::Function *F =
+        llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "scaffold_fn", mod.get());
     llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
     builder.SetInsertPoint(BB);
     builder.CreateRet(builder.getInt32(42));
@@ -71,9 +70,8 @@ int main(int argc, char **argv) {
     auto addrOrErr = vm.lookup("scaffold_fn");
     if (!addrOrErr) {
       std::string msg;
-      llvm::handleAllErrors(
-          addrOrErr.takeError(),
-          [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
+      llvm::handleAllErrors(addrOrErr.takeError(),
+                            [&](llvm::ErrorInfoBase &EIB) { msg = EIB.message(); });
       std::cerr << "lookup failed: " << msg << "\n";
       return 1;
     }
@@ -89,21 +87,24 @@ int main(int argc, char **argv) {
   // Start with C++23 (np.hpp and modern headers need it)
   // Will auto-downgrade if needed, but C++23 is safest for np headers
   // Pass include/library paths from cmdline (absolute & relative)
-  if (!interp.init(cpprepl::utils::StdVersion::Cpp23, opts.includePaths,
-                   opts.defines, opts.libraryPaths, opts.libraries, err)) {
+  if (!interp.init(cpprepl::utils::StdVersion::Cpp23, opts.includePaths, opts.defines,
+                   opts.libraryPaths, opts.libraries, err)) {
     std::cerr << "REPL init failed: " << err << "\n";
     return 1;
   }
   if (!opts.includePaths.empty()) {
     std::cout << "[include paths:";
-    for (auto &p : opts.includePaths) std::cout << " " << p;
+    for (auto &p : opts.includePaths)
+      std::cout << " " << p;
     std::cout << "]\n";
   }
   if (!opts.libraryPaths.empty() || !opts.libraries.empty()) {
     std::cout << "[library paths:";
-    for (auto &p : opts.libraryPaths) std::cout << " " << p;
+    for (auto &p : opts.libraryPaths)
+      std::cout << " " << p;
     std::cout << " | libs:";
-    for (auto &l : opts.libraries) std::cout << " " << l;
+    for (auto &l : opts.libraries)
+      std::cout << " " << l;
     std::cout << "]\n";
   }
 
@@ -115,9 +116,7 @@ int main(int argc, char **argv) {
       return 1;
     }
     std::cout << "[loaded " << f << "] ["
-              << cpprepl::utils::VersionDetector::toString(
-                     interp.currentVersion())
-              << "]\n";
+              << cpprepl::utils::VersionDetector::toString(interp.currentVersion()) << "]\n";
   }
   for (auto &c : opts.execCodes) {
     std::string e;
@@ -138,10 +137,11 @@ int main(int argc, char **argv) {
 
   // Show help and current capabilities (with subtle color when enabled)
   {
-    bool useColor = !opts.noColor && isatty(STDOUT_FILENO) &&
-                    !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+    bool useColor = !opts.noColor && isatty(STDOUT_FILENO) && !getenv("NO_COLOR") &&
+                    !getenv("CPP_REPL_NO_COLOR");
     const char *term = getenv("TERM");
-    if (useColor && term && std::string(term) == "dumb") useColor = false;
+    if (useColor && term && std::string(term) == "dumb")
+      useColor = false;
     if (useColor) {
       std::cout << "\033[90m— cpp-repl \033[1;36mC++ REPL\033[0m\033[90m "
                    "(LLVM 22, O0) — type \033[33m:help\033[90m, "
@@ -155,8 +155,7 @@ int main(int argc, char **argv) {
                     ? "yes (boost::multiprecision::cpp_int)"
                     : "no")
             << "\n";
-  std::cout
-      << "Try: bigint x = cpp_int(\"123456789012345678901234567890\"); x * x\n";
+  std::cout << "Try: bigint x = cpp_int(\"123456789012345678901234567890\"); x * x\n";
 
   // Run interactive session via scalable repl::Session
   cpprepl::repl::Session session(interp);

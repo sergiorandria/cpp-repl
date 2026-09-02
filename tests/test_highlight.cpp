@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "cpp-repl/utils/highlight.h"
+
+#include <gtest/gtest.h>
 
 using cpprepl::utils::Highlighter;
 
