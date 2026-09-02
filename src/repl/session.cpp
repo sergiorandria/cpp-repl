@@ -22,6 +22,89 @@
 #ifdef HAS_READLINE
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <filesystem>
+#include <vector>
+#include <cstring>
+// All colon commands for completion (canonical + aliases)
+static const std::vector<std::string> kColonCommands = {
+  ":help", ":h",
+  ":quit", ":exit", ":q",
+  ":dump",
+  ":reset", ":flush", ":forget", ":clearstack", ":drop",
+  ":clear", ":cls", ":c",
+  ":load",
+  ":lib",
+  ":undo",
+  ":I", ":include", ":inc",
+  ":L", ":libpath",
+  ":version",
+  ":stack", ":layout", ":view", ":s", ":stacklayout", ":ls", ":info",
+  ":security", ":sandbox",
+};
+// Generator for readline
+static char *colon_command_generator(const char *text, int state) {
+  static size_t idx, len;
+  if (state == 0) { idx = 0; len = strlen(text); }
+  while (idx < kColonCommands.size()) {
+    const std::string &cmd = kColonCommands[idx++];
+    if (strncmp(cmd.c_str(), text, len) == 0) {
+      return strdup(cmd.c_str());
+    }
+  }
+  return nullptr;
+}
+// File-path completion for :load/:I/:L etc. — delegate to readline's filename completion
+static char **colon_completion(const char *text, int start, int end) {
+  (void)end;
+  (void)start;
+  // Only complete if the line starts with ':' (command)
+  // text is the word to complete, start is its offset in rl_line_buffer
+  std::string line = rl_line_buffer ? std::string(rl_line_buffer) : "";
+  std::string word = text ? std::string(text) : "";
+  // Trim leading spaces
+  size_t a = line.find_first_not_of(" \t");
+  std::string trimmed = (a == std::string::npos) ? "" : line.substr(a);
+  if (trimmed.empty() || trimmed[0] != ':') {
+    return nullptr; // not a colon command, use default (no completion for C++ code)
+  }
+  // If completing first word (start == 0 or after ':'), complete command names
+  // Check if we are completing the command itself (no space yet, or word starts with ':')
+  bool completingCommand = (word.size() > 0 && word[0] == ':') || (trimmed.find(' ') == std::string::npos);
+  if (completingCommand) {
+    // Ensure word starts with ':' for generator
+    std::string prefix = word;
+    if (prefix.empty() || prefix[0] != ':') {
+      // Happens when text is without ':' due to word break? Try to get prefix from line
+      size_t colon = line.find(':');
+      if (colon != std::string::npos) {
+        size_t sp = line.find(' ', colon);
+        prefix = line.substr(colon, sp == std::string::npos ? std::string::npos : sp - colon);
+        // If text is not empty, it should be suffix of prefix
+        if (!word.empty() && prefix.size() >= word.size() && prefix.substr(prefix.size() - word.size()) == word) {
+          // ok
+        } else {
+          prefix = word;
+          if (!prefix.empty() && prefix[0] != ':') prefix = ":" + prefix;
+        }
+      } else {
+        prefix = ":" + word;
+      }
+    }
+    char **matches = rl_completion_matches(prefix.c_str(), colon_command_generator);
+    // Don't append space, let readline handle
+    rl_completion_append_character = ' ';
+    return matches;
+  }
+  // Completing argument of :load / :I / :L / :lib — use filename completion
+  std::string cmd = trimmed.substr(0, trimmed.find(' '));
+  if (cmd == ":load" || cmd == ":lib" || cmd == ":I" || cmd == ":include" || cmd == ":inc" || cmd == ":L" || cmd == ":libpath") {
+    // Use readline's filename completion (handles ~, absolute/relative, dirs)
+    rl_completion_append_character = ' ';
+    // Temporarily set completion word break to handle paths
+    return rl_completion_matches(text, rl_filename_completion_function);
+  }
+  return nullptr;
+}
 #endif
 
 namespace cpprepl {
@@ -674,6 +757,9 @@ void Session::runInteractive() {
   if (useReadline) {
     rl_readline_name = const_cast<char*>("cpp-repl");
     using_history();
+    // Auto-completion for colon commands (e.g. :help, :stack, :load)
+    rl_attempted_completion_function = colon_completion;
+    // Use tab for completion, handle : as word break? Keep default
     const char *home = getenv("HOME");
     std::string histFile = home ? std::string(home) + "/.cpp_repl_history" : "";
     if (!histFile.empty()) read_history(histFile.c_str());
