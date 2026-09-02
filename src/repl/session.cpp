@@ -249,6 +249,75 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
     viewStack();
     return true;
   }
+  if (t.rfind(":security", 0) == 0 || t.rfind(":sandbox", 0) == 0) {
+    std::string args = "";
+    if (t.rfind(":security", 0) == 0) args = trim(t.substr(9));
+    else args = trim(t.substr(8));
+    auto cfg = interp_.securityConfig();
+    if (args.empty()) {
+      bool useColor = shouldUseColor(false);
+      auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+      auto rst = col("\033[0m");
+      auto cyan = col("\033[36m");
+      auto grey = col("\033[90m");
+      auto yellow = col("\033[33m");
+      auto green = col("\033[32m");
+      auto red = col("\033[31m");
+      std::cout << cyan << "┌─[security]─ Sandbox ───────────────────────" << rst << "\n";
+      std::cout << grey << "│ " << rst << "allowSystemCalls: " << (cfg.allowSystemCalls ? green + "true" + rst : red + "false" + rst) << grey << " (system/popen/fork/exec)" << rst << "\n";
+      std::cout << grey << "│ " << rst << "allowFileWrite:   " << (cfg.allowFileWrite ? green + "true" + rst : red + "false" + rst) << grey << " (unlink/remove/fopen w)" << rst << "\n";
+      std::cout << grey << "│ " << rst << "allowNetwork:     " << (cfg.allowNetwork ? green + "true" + rst : red + "false" + rst) << grey << " (socket/connect)" << rst << "\n";
+      std::cout << grey << "│ " << rst << "maxHistory:       " << yellow << cfg.maxHistory << rst << "\n";
+      std::cout << grey << "│ " << rst << "maxCodeSize:      " << yellow << cfg.maxCodeSize << rst << "\n";
+      std::cout << grey << "│ " << rst << "sandboxRoot:      " << (cfg.sandboxRoot.empty() ? grey + "(none)" + rst : yellow + cfg.sandboxRoot + rst) << "\n";
+      std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
+      std::cout << grey << "  usage: :security allowSystemCalls true|false\n";
+      std::cout << "         :security allowFileWrite true|false\n";
+      std::cout << "         :security allowNetwork true|false\n" << rst;
+      return true;
+    }
+    auto eqPos = args.find('=');
+    std::string key, val;
+    if (eqPos != std::string::npos) {
+      key = trim(args.substr(0, eqPos));
+      val = trim(args.substr(eqPos+1));
+    } else {
+      size_t sp = args.find(' ');
+      if (sp != std::string::npos) {
+        key = trim(args.substr(0, sp));
+        val = trim(args.substr(sp+1));
+      } else {
+        key = args;
+        val = "";
+      }
+    }
+    std::string lowVal = val;
+    std::transform(lowVal.begin(), lowVal.end(), lowVal.begin(), ::tolower);
+    bool boolVal = (lowVal == "true" || lowVal == "1" || lowVal == "on" || lowVal == "yes");
+    if (key == "allowSystemCalls" || key == "system") {
+      if (val.empty()) { std::cout << "allowSystemCalls = " << (cfg.allowSystemCalls ? "true" : "false") << "\n"; return true; }
+      cfg.allowSystemCalls = boolVal;
+      interp_.setSecurityConfig(cfg);
+      std::cout << "[security] allowSystemCalls = " << (boolVal ? "true" : "false") << "\n";
+      return true;
+    }
+    if (key == "allowFileWrite" || key == "filewrite") {
+      if (val.empty()) { std::cout << "allowFileWrite = " << (cfg.allowFileWrite ? "true" : "false") << "\n"; return true; }
+      cfg.allowFileWrite = boolVal;
+      interp_.setSecurityConfig(cfg);
+      std::cout << "[security] allowFileWrite = " << (boolVal ? "true" : "false") << "\n";
+      return true;
+    }
+    if (key == "allowNetwork" || key == "network") {
+      if (val.empty()) { std::cout << "allowNetwork = " << (cfg.allowNetwork ? "true" : "false") << "\n"; return true; }
+      cfg.allowNetwork = boolVal;
+      interp_.setSecurityConfig(cfg);
+      std::cout << "[security] allowNetwork = " << (boolVal ? "true" : "false") << "\n";
+      return true;
+    }
+    std::cout << "unknown security key: " << key << " (try :security)\n";
+    return true;
+  }
   if (t.rfind(":stack", 0) == 0 || t.rfind(":layout", 0) == 0 || t.rfind(":view", 0) == 0) {
     std::string args;
     if (t.rfind(":stack", 0) == 0) args = trim(t.substr(6));
@@ -366,7 +435,7 @@ bool Session::handleCommand(const std::string &line, std::string &err) {
       // For simplicity, use stackSwap after push
       // We'll just use the underlying interpreter's history via dump and manual
       // For now, implement as: remove idx, then push code, then swap to position
-      std::string err;
+      std::string localErr;
       // Save current history size
       size_t sz = interp_.historySize();
       if (idx >= sz) { std::cerr << "stack edit error: index out of range\n"; return true; }

@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "cpp-repl/security/sandbox.h"
 #include "cpp-repl/utils/version_detector.h"
 
 namespace cpprepl {
@@ -18,6 +19,7 @@ struct InterpreterConfig {
   bool enableBigInt = true;
   bool enableStdLib = true;
   bool enableGMP = false;
+  security::SecurityConfig security;
 };
 
 struct SessionConfig {

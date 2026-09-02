@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "cpp-repl/security/sandbox.h"
 #include "cpp-repl/utils/i_variable_tracker.h"
 #include "cpp-repl/utils/version_detector.h"
 
@@ -138,6 +139,9 @@ public:
   bool stackRemove(const std::string &name, std::string &err);
   bool stackSet(const std::string &name, const std::string &code, std::string &err);
   bool stackSwap(size_t i, size_t j, std::string &err);
+  /** @brief Security sandbox for code checks. */
+  void setSecurityConfig(const security::SecurityConfig &cfg);
+  security::SecurityConfig securityConfig() const;
   /** @brief Reset interpreter state. */
   void reset(std::string &err);
   /** @brief Print help text. */
@@ -174,6 +178,7 @@ private:
   // --- Scalable interfaces (Strategy pattern) ---
   // Variable tracking via interface (avoids unordered_map churn, testable)
   std::unique_ptr<utils::IVariableTracker> tracker_;
+  security::Sandbox sandbox_;
   // History for replay uses Result pattern internally, but keep bool+string API for compat
   std::unique_ptr<clang::Interpreter> interp_;
   bool initialized_ = false;

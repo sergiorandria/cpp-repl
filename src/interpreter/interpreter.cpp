@@ -789,6 +789,15 @@ bool Interpreter::eval(const std::string &code, std::string &err) {
     ensureStdLib(dummy);
   }
 
+  // Security hardening: check code for dangerous patterns (system, popen, etc.)
+  {
+    std::string secErr = sandbox_.check(sanitized);
+    if (!secErr.empty()) {
+      err = secErr;
+      return false;
+    }
+  }
+
   if (trimmed.rfind("#include", 0) == 0) {
     size_t q1 = sanitized.find('"');
     size_t q2 = std::string::npos;
@@ -1367,6 +1376,12 @@ bool Interpreter::stackSwap(size_t i, size_t j, std::string &err) {
     }
   }
   return true;
+}
+void Interpreter::setSecurityConfig(const security::SecurityConfig &cfg) {
+  sandbox_.setConfig(cfg);
+}
+security::SecurityConfig Interpreter::securityConfig() const {
+  return sandbox_.config();
 }
 void Interpreter::reset(std::string &err) {
   std::string local;
