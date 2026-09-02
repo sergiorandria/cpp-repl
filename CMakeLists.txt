@@ -117,9 +117,9 @@ target_include_directories(cpp-repl-core
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     src
-    ${LLVM_INCLUDE_DIRS}
-    ${CLANG_INCLUDE_DIRS}
 )
+# LLVM/Clang as SYSTEM to suppress -Wsign-conversion etc. from their headers
+target_include_directories(cpp-repl-core SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 target_compile_definitions(cpp-repl-core
   PUBLIC ${LLVM_DEFINITIONS}
   PRIVATE
