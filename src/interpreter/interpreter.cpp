@@ -624,9 +624,9 @@ static std::string preprocessBigIntLiterals(const std::string &code) {
       else
         type = "bigint";
     }
-    out.append(result, lastPos, m.position() - lastPos);
+    out.append(result, lastPos, static_cast<size_t>(m.position()) - lastPos);
     out += prefix + type + "(\"" + digits + "\")" + suffix;
-    lastPos = m.position() + m.length();
+    lastPos = static_cast<size_t>(m.position()) + static_cast<size_t>(m.length());
   }
   out.append(result, lastPos, std::string::npos);
   if (lastPos != 0)
@@ -643,9 +643,9 @@ static std::string preprocessBigIntLiterals(const std::string &code) {
     std::string prefix = m[1].str();
     std::string digits = m[2].str();
     std::string suffix = m[3].str();
-    out.append(result, lastPos, m.position() - lastPos);
+    out.append(result, lastPos, static_cast<size_t>(m.position()) - lastPos);
     out += prefix + "cpp_int(\"" + digits + "\")" + suffix;
-    lastPos = m.position() + m.length();
+    lastPos = static_cast<size_t>(m.position()) + static_cast<size_t>(m.length());
   }
   if (lastPos != 0) {
     out.append(result, lastPos, std::string::npos);
@@ -1457,15 +1457,15 @@ bool Interpreter::stackRemove(const std::string &name, std::string &err) {
   // Find last history entry that defines this variable and undo from there
   // For simplicity, find index of last defining entry and rebuild without it
   int idx = -1;
-  for (int i = static_cast<int>(history_.size()) - 1; i >= 0; --i) {
+  for (size_t ii = history_.size(); ii-- > 0; ) {
     std::string type, n, v;
-    if (parseDeclaration(history_[i], type, n, v) && n == name) {
-      idx = i;
+    if (parseDeclaration(history_[ii], type, n, v) && n == name) {
+      idx = static_cast<int>(ii);
       break;
     }
     std::string aN, aV;
-    if (parseAssignment(history_[i], aN, aV) && aN == name) {
-      idx = i;
+    if (parseAssignment(history_[ii], aN, aV) && aN == name) {
+      idx = static_cast<int>(ii);
       break;
     }
   }
