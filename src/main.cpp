@@ -23,6 +23,7 @@
 #include <string>
 #ifndef _WIN32
 #include <unistd.h>
+#include <sys/resource.h>
 #endif
 
 int main(int argc, char **argv) {
@@ -108,23 +109,74 @@ int main(int argc, char **argv) {
     std::cout << "]\n";
   }
 
+  // Helper to show stats after file/-e when --stats/--mem/--verbose is given
+  auto showFileStats = [&](const std::string &label, std::chrono::steady_clock::time_point t0,
+                           std::chrono::steady_clock::time_point t1, bool success) {
+    bool needStats = opts.showStats || opts.verbose;
+    bool needMem = opts.showMem || opts.verbose;
+    bool needTime = opts.showTime || opts.verbose || needStats;
+    if (!needStats && !needMem && !needTime) return;
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    bool useColor = !opts.noColor && isatty(STDOUT_FILENO) && !getenv("NO_COLOR") && !getenv("CPP_REPL_NO_COLOR");
+    const char *term = getenv("TERM");
+    if (useColor && term && std::string(term) == "dumb") useColor = false;
+    auto col = [&](const char* c){ return useColor ? std::string(c) : std::string(""); };
+    auto rst = col("\033[0m");
+    auto cyan = col("\033[36m");
+    auto grey = col("\033[90m");
+    auto green = col("\033[32m");
+    auto red = col("\033[31m");
+    auto yellow = col("\033[33m");
+    std::cout << cyan << "┌─[file]─ " << rst << label << " " << (success ? green + "✓" + rst : red + "✗" + rst);
+    if (needTime) std::cout << grey << "  " << ms << "ms" << rst;
+    std::cout << "\n";
+    if (needStats || needMem) {
+      // Show stack layout (variables, history) and heap layout
+      // Use interpreter's stackLayout/heapLayout which already handle color
+      if (needStats) {
+        interp.stackLayout();
+      }
+      if (needMem) {
+        interp.heapLayout();
+      } else if (needStats) {
+        // For --stats without --mem, still show a compact memory line
+        void* heapTop = sbrk(0);
+        std::cout << grey << "│ " << rst << "Heap top: " << yellow << heapTop << rst << "  RSS: ";
+        struct rusage ru;
+        if (getrusage(RUSAGE_SELF, &ru) == 0) std::cout << green << ru.ru_maxrss << " KB" << rst;
+        std::cout << "\n";
+      }
+    }
+    std::cout << cyan << "└──────────────────────────────────────────────" << rst << "\n";
+  };
+
   // Load files / -e code before interactive loop (like python script)
   for (auto &f : opts.files) {
+    auto t0 = std::chrono::steady_clock::now();
     std::string e;
-    if (!interp.loadFile(f, e)) {
+    bool ok = interp.loadFile(f, e);
+    auto t1 = std::chrono::steady_clock::now();
+    if (!ok) {
       std::cerr << "failed to load " << f << ": " << e << "\n";
+      showFileStats(f, t0, t1, false);
       return 1;
     }
     std::cout << "[loaded " << f << "] ["
               << cpprepl::utils::VersionDetector::toString(interp.currentVersion()) << "]\n";
+    showFileStats(f, t0, t1, true);
   }
   for (auto &c : opts.execCodes) {
+    auto t0 = std::chrono::steady_clock::now();
     std::string e;
-    if (!interp.evalAuto(c, e)) {
+    bool ok = interp.evalAuto(c, e);
+    auto t1 = std::chrono::steady_clock::now();
+    if (!ok) {
       if (!e.empty())
         std::cerr << " -e error: " << e << "\n";
+      showFileStats(std::string("-e \"") + c.substr(0, 40) + (c.size()>40?"...":"") + "\"", t0, t1, false);
       return 1;
     }
+    showFileStats(std::string("-e \"") + c.substr(0, 40) + (c.size()>40?"...":"") + "\"", t0, t1, true);
   }
   if (opts.noInteractive)
     return 0;

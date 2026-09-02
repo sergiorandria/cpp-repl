@@ -19,6 +19,10 @@ struct Options {
   bool showHelp = false;                 ///< Print help.
   bool showVersion = false;              ///< Print version.
   bool noColor = false;                  ///< Disable colored prompt/timing.
+  bool showStats = false;                ///< Show stats after file/-e (time, memory, stack/heap).
+  bool showMem = false;                  ///< Show memory info (heap, RSS, mallinfo) after file.
+  bool showTime = false;                 ///< Show timing per file.
+  bool verbose = false;                  ///< Verbose: implies stats+mem+time.
   std::vector<std::string> execCodes;    ///< Code from -e flags.
   std::vector<std::string> files;        ///< Input files.
   std::vector<std::string> includePaths; ///< Include paths (-I).
