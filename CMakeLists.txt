@@ -119,7 +119,8 @@ target_include_directories(cpp-repl-core
     src
 )
 # LLVM/Clang as SYSTEM to suppress -Wsign-conversion etc. from their headers
-target_include_directories(cpp-repl-core SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+# Must be PUBLIC so consumers (cpp-repl, tests) that include core/vm.h -> llvm/LLJIT.h can find LLVM headers
+target_include_directories(cpp-repl-core SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 target_compile_definitions(cpp-repl-core
   PUBLIC ${LLVM_DEFINITIONS}
   PRIVATE
