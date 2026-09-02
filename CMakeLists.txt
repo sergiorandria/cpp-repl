@@ -242,6 +242,11 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_SOURCE_IGNORE_FILES "/build/;/.git/;/.cache/;/.o/")
 include(CPack)
 
+# ── Benchmark (optional) ───────────────────────────────────────────────
+add_executable(bench-repl EXCLUDE_FROM_ALL benchmark/bench_repl.cpp)
+target_link_libraries(bench-repl PRIVATE cpp-repl-core)
+target_include_directories(bench-repl PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
 # ── Doxygen (optional) ─────────────────────────────────────────────────
 find_package(Doxygen QUIET)
 if(DOXYGEN_FOUND)
