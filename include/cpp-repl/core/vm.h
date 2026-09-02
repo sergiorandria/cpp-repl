@@ -64,6 +64,8 @@ public:
   LLJITVM() = default;
   ~LLJITVM() override = default;
   LLJITVM(const LLJITVM &) = delete;
+  LLJITVM(LLJITVM &&) = delete;
+  LLJITVM &operator=(LLJITVM &&) = delete;
   LLJITVM &operator=(const LLJITVM &) = delete;
 
   bool init(std::string &err) override;

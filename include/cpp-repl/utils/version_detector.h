@@ -29,12 +29,12 @@ public:
    * @param code Source snippet to inspect.
    * @return Required StdVersion (minimum is Cpp17).
    */
-  static StdVersion detect(const std::string &code);
+  static StdVersion detect(const std::string &code) noexcept;
 
   /** @brief Convert version to compiler flag, e.g. -std=c++20. */
-  static std::string toFlag(StdVersion v);
+  static std::string toFlag(StdVersion v) noexcept;
   /** @brief Convert version to human string, e.g. C++20. */
-  static std::string toString(StdVersion v);
+  static std::string toString(StdVersion v) noexcept;
   /** @brief Human description with features. */
   static std::string describe(StdVersion v);
 

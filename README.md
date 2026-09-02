@@ -124,7 +124,7 @@ cmake --build build -j
 ```bash
 cpp-repl [options] [file ...]
   -h, --help           show help
-  -v, --version        show version (0.2.0 + LLVM 22.1.3)
+  -v, --version        show version (0.3.0 + LLVM 22.1.3)
   --scaffold           show low-level VM IR demo (hidden by default)
   --no-interactive     exit after file/-e execution (script mode, like python)
   -e <code>            execute raw C++ code (no main needed)

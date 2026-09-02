@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file highlight.h
+ * @brief highlight — utils module.
+ */
 #include <string>
 
 namespace cpprepl {

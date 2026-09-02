@@ -3,11 +3,22 @@
 #include <string>
 #include <variant>
 
+/**
+ * @file result.h
+ * @brief Result<T> — std::expected polyfill for explicit error handling.
+ * @details Avoids bool+string anti-pattern (AGENTS.md §4). Forces callers to
+ *          handle errors via ok()/error()/value(). Primary API for Interpreter
+ *          and Session; legacy bool+string kept for compat and to be deprecated.
+ */
+
 namespace cpprepl {
 namespace utils {
 
-// Lightweight Result<T> pattern (like std::expected) to avoid bool+string err anti-pattern.
-// Keeps error context and forces caller to handle errors.
+/**
+ * @brief Result with value or error string.
+ * @tparam T Value type on success.
+ * @details On success holds T, on failure holds error string. Use ok()/operator bool() to check.
+ */
 template <typename T> class Result {
 public:
   static Result success(T v) {

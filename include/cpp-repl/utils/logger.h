@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file logger.h
+ * @brief logger — utils module.
+ */
 #include <iostream>
 #include <string>
 #ifdef __has_include
@@ -64,7 +69,7 @@ private:
 };
 
 // Global helper to decide color (respects NO_COLOR)
-inline bool shouldUseColor() {
+inline inline bool shouldUseColor() noexcept {
   if (getenv("NO_COLOR") || getenv("CPP_REPL_NO_COLOR") || getenv("NO_COLOUR"))
     return false;
   if (getenv("FORCE_COLOR") || getenv("CLICOLOR_FORCE"))

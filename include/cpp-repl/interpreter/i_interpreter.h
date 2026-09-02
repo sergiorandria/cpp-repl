@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file i_interpreter.h
+ * @brief i_interpreter — interpreter module.
+ */
 #include "cpp-repl/config/config.h"
 #include "cpp-repl/utils/result.h"
 

@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file config.h
+ * @brief config — config module.
+ */
 #include "cpp-repl/security/sandbox.h"
 #include "cpp-repl/utils/version_detector.h"
 

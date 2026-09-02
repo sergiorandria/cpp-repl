@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file i_variable_tracker.h
+ * @brief i_variable_tracker — utils module.
+ */
 #include <memory>
 #include <optional>
 #include <string>

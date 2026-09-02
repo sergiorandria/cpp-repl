@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file i_command.h
+ * @brief i_command — repl module.
+ */
 #include "cpp-repl/utils/result.h"
 
 #include <functional>

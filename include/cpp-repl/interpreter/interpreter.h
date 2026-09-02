@@ -35,6 +35,8 @@ public:
 
   Interpreter(const Interpreter &) = delete;
   Interpreter &operator=(const Interpreter &) = delete;
+  Interpreter(Interpreter &&) = delete;
+  Interpreter &operator=(Interpreter &&) = delete;
 
   /**
    * @brief Init with explicit version and include/lib options.

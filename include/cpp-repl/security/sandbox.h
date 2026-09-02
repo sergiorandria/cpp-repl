@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file sandbox.h
+ * @brief sandbox — security module.
+ */
 #include <string>
 #include <vector>
 

@@ -177,7 +177,7 @@ void printHelp(const char *prog) {
                 "  cpp-repl --mem --verbose examples/bigint.cpp\n";
 }
 void printVersion() {
-  std::cout << "cpp-repl 0.2.0 (LLVM 22.1.3 / clang 22.1.8)\n"
+  std::cout << "cpp-repl 0.3.0 (LLVM 22.1.3 / clang 22.1.8)\n"
                "VM: llvm::orc::LLJIT (O0) | Frontend: clang::Interpreter\n"
                "Supports: C++17/20/23 auto-detect, BigInt (boost::multiprecision)\n";
 }

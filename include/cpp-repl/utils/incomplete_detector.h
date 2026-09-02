@@ -1,4 +1,9 @@
 #pragma once
+
+/**
+ * @file incomplete_detector.h
+ * @brief incomplete_detector — utils module.
+ */
 #include <string>
 
 namespace cpprepl {
