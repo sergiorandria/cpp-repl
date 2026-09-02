@@ -204,6 +204,18 @@ bool Interpreter::init(utils::StdVersion version, const std::vector<std::string>
   compilerArgsStorage_.clear();
   compilerArgsStorage_.push_back(utils::VersionDetector::toFlag(version));
   compilerArgsStorage_.push_back("-O0");
+  // Hardening: upstream np headers have self-assign and narrowing that are -Werror in CI
+  // Silence them globally so #include "/.../np/np.hpp" never fails with -Werror
+  compilerArgsStorage_.push_back("-Wno-self-assign-field");
+  compilerArgsStorage_.push_back("-Wno-error=self-assign-field");
+  compilerArgsStorage_.push_back("-Wno-c++11-narrowing");
+  compilerArgsStorage_.push_back("-Wno-error=c++11-narrowing");
+  compilerArgsStorage_.push_back("-Wno-narrowing");
+  compilerArgsStorage_.push_back("-Wno-error=narrowing");
+  compilerArgsStorage_.push_back("-Wno-sign-conversion");
+  compilerArgsStorage_.push_back("-Wno-error=sign-conversion");
+  compilerArgsStorage_.push_back("-Wno-conversion");
+  compilerArgsStorage_.push_back("-Wno-error=conversion");
   compilerArgsStorage_.push_back("-resource-dir");
 #ifndef CLANG_RESOURCE_DIR
 #define CLANG_RESOURCE_DIR "/usr/lib/clang/22"

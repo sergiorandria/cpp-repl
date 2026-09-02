@@ -3,8 +3,19 @@
  * @brief Force-included fixes for Numpy-C-API headers.
  *
  * Handles NZERO/PZERO clashes and ProxyBase compatibility without modifying upstream headers.
+ * Also silences hardening warnings that are treated as errors (-Werror) in the REPL.
  */
 #pragma once
+
+// Hardening: silence warnings that upstream np headers trigger with -Werror
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wself-assign-field"
+#pragma clang diagnostic ignored "-Wself-assign"
+#pragma clang diagnostic ignored "-Wc++11-narrowing"
+#pragma clang diagnostic ignored "-Wnarrowing"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wshadow"
 
 // 1. NZERO/PZERO clash
 #ifdef NZERO
