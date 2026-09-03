@@ -100,15 +100,18 @@ add_library(cpp-repl-core STATIC
   src/vm.cpp
   src/repl.cpp
   src/core/vm.cpp
+  src/core/remote_jit.cpp
   src/interpreter/interpreter.cpp
   src/utils/version_detector.cpp
   src/utils/bigint.cpp
   src/utils/highlight.cpp
   src/utils/incomplete_detector.cpp
   src/utils/variable_tracker.cpp
+  src/utils/pch_cache.cpp
   src/security/sandbox.cpp
   src/repl/session.cpp
   src/repl/command_registry.cpp
+  src/lsp/server.cpp
   src/cli/cli.cpp
 )
 target_include_directories(cpp-repl-core

@@ -88,8 +88,10 @@ bool VersionDetector::containsWord(const std::string &code, const std::string &w
   return false;
 }
 
-StdVersion VersionDetector::detect(const std::string &code) {
-  std::string stripped = stripCommentsAndStrings(code);
+StdVersion VersionDetector::detect(const std::string &code) noexcept {
+  std::string stripped;
+  try { stripped = stripCommentsAndStrings(code); } catch (...) { return StdVersion::Cpp17; }
+  // Wrap in try to avoid terminate on bad_alloc etc.
   // C++23 keywords – check stripped (import/export + module)
   if (contains(stripped, "import ") || contains(stripped, "module ") ||
       containsWord(stripped, "import") || containsWord(stripped, "export") ||
@@ -112,7 +114,7 @@ StdVersion VersionDetector::detect(const std::string &code) {
   return StdVersion::Cpp17;
 }
 
-std::string VersionDetector::toFlag(StdVersion v) {
+std::string VersionDetector::toFlag(StdVersion v) noexcept {
   switch (v) {
   case StdVersion::Cpp17:
     return "-std=c++17";
@@ -123,7 +125,7 @@ std::string VersionDetector::toFlag(StdVersion v) {
   }
   return "-std=c++17";
 }
-std::string VersionDetector::toString(StdVersion v) {
+std::string VersionDetector::toString(StdVersion v) noexcept {
   switch (v) {
   case StdVersion::Cpp17:
     return "C++17";
