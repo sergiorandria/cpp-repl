@@ -66,14 +66,16 @@ echo 'cpp_int a=cpp_int("12345678901234567890"); a*a' | ./build/cpp-repl
 
 ## ✨ Features
 
-- **🧠 LLVM VM core** — `llvm::orc::LLJIT` in-process JIT, `LLVMContext`/`Module`/`IRBuilder`, pluggable `core::VM` interface (swap to `RemoteJIT`)
-- **🩺 Clang frontend** — `clang::Interpreter` incremental parser + ORC executor, real C++ parsing (not a toy)
-- **🔄 Incremental REPL** — `repl::Session` with `cpp>` / `...>` multiline, history, `:undo`, `:reset`, `:dump`, `:clear`
+- **🧠 LLVM VM core** — `llvm::orc::LLJIT` in-process JIT (+ `RemoteJIT` out-of-process), `LLVMContext`/`Module`/`IRBuilder`, pluggable `core::VM` interface
+- **🩺 Clang frontend** — `clang::Interpreter` incremental parser + ORC executor, real C++ parsing (not a toy), `PCH` cache for `bits/stdc++.h` (0.5s → 20ms)
+- **🔄 Incremental REPL** — `repl::Session` with `cpp>` / `...>` multiline, history, `:undo`, `:reset`, `:dump`, `:clear`, `:stack`/`:heap`/`:trace` + `...>` buffering
 - **🎯 Auto C++ version** — `C++17` default; upgrades to `C++20` on `concept`/`requires`/`co_await`/`<=>`/`consteval`, to `C++23` on `import`/`module`
 - **🔢 BigInt** — `boost::multiprecision::cpp_int` (`bigint` alias) + `mpz_int` if GMP present; strings wrapped as `cpp_int("...")` to avoid literal overflow
 - **📁 Includes & libs** — absolute + relative `-I`/`-L`/`-l`/`-D` on cmdline **and** live `:I <path>` / `:L <path>` / `:lib <path>`; survives version upgrades
 - **🎨 Precise floats** — `float 9`, `double 17`, `long double 21` digits (`max_digits10`) instead of truncated `%6g`/`%8g`
 - **🧪 No optimizations** — always `-O0 -g -fno-exceptions -fno-rtti`, diagnostics → stderr, `llvm::Error` handling
+- **⚡ Concurrency** — `lsp::ThreadPool` + `ThreadSafeContext` for notebook/LSP cells (async `evalAsync`)
+- **🔒 Security** — `security::Sandbox` (`:security` to view/toggle `allowSystemCalls`/`allowFileWrite`/`allowNetwork`)
 
 ## 🏗️ Architecture (scalable)
 
